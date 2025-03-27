@@ -3,24 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Sorting Algorithm Benchmark</title>
+    <title>Benchmark Results</title>
     <style>
         body { font-family: sans-serif; margin: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
         .error { color: red; }
-        form { margin-bottom: 20px; }
+        nav { margin-bottom: 20px; }
+        nav a { margin-right: 15px; text-decoration: none; }
     </style>
 </head>
 <body>
-    <h1>LLM Sorting Algorithm Benchmark</h1>
+    <nav>
+        <a href="{{ url_for('index') }}">View Results</a> |
+        <a href="{{ url_for('admin') }}">Run Benchmark</a>
+    </nav>
 
-    <form action="{{ url_for('run_benchmark') }}" method="post">
-        <p>Trigger a new benchmark run (functionality is currently a placeholder):</p>
-        <!-- Add inputs here later to select LLMs, algorithms etc. -->
-        <button type="submit">Run Benchmark</button>
-    </form>
+    <h1>LLM Sorting Algorithm Benchmark Results</h1>
 
     <h2>Results</h2>
     {% if results %}
