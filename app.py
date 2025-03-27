@@ -53,21 +53,17 @@ def run_benchmark_background(llm_name, algorithm_name):
 @app.route('/run', methods=['POST'])
 def run_benchmark():
     """Endpoint to trigger a new benchmark run."""
-    # Get parameters from form (using defaults for now if not provided)
-    # TODO: Update admin.html to actually send these parameters
-    llm_name = request.form.get('llm', 'dummy_llm')
-    algorithm_name = request.form.get('algorithm', 'Bubble Sort')
+    # Get parameters from form
+    llm_name = request.form.get('llm')
+    algorithm_name = request.form.get('algorithm')
 
-    # Basic validation
-    if llm_name not in AVAILABLE_LLMS:
-        flash(f"Invalid LLM selected: {llm_name}", "error")
+    # Validate parameters
+    if not llm_name or llm_name not in AVAILABLE_LLMS:
+        flash(f"Invalid or missing LLM selected: {llm_name}", "error")
         return redirect(url_for('admin'))
-    if algorithm_name not in AVAILABLE_ALGORITHMS:
-         # Allow custom algorithms for now, but maybe validate later?
-        print(f"Running benchmark for custom algorithm: {algorithm_name}")
-        # flash(f"Invalid Algorithm selected: {algorithm_name}", "error")
-        # return redirect(url_for('admin'))
-
+    if not algorithm_name or algorithm_name not in AVAILABLE_ALGORITHMS:
+        flash(f"Invalid or missing Algorithm selected: {algorithm_name}", "error")
+        return redirect(url_for('admin'))
 
     # Run benchmark in a background thread to avoid blocking the web request
     thread = threading.Thread(target=run_benchmark_background, args=(llm_name, algorithm_name))

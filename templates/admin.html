@@ -23,17 +23,25 @@
     <h1>Run LLM Benchmark</h1>
 
     <form action="{{ url_for('run_benchmark') }}" method="post">
-        <p>Trigger a new benchmark run. (LLM/Algorithm selection coming soon)</p>
-        <!-- TODO: Add inputs here to select LLMs, algorithms etc. -->
-        <!-- Example:
-        <label for="llm">LLM:</label>
-        <select name="llm" id="llm">
-            <option value="dummy_llm">Dummy LLM</option>
-            <!-- Add other LLM options -->
-        </select>
-        <label for="algorithm">Algorithm:</label>
-        <input type="text" id="algorithm" name="algorithm" value="Bubble Sort" required>
-        <!-- End of example -->
+        <div>
+            <label for="llm">Select LLM:</label>
+            <select name="llm" id="llm" required>
+                {% for llm_option in llms %}
+                    <option value="{{ llm_option }}">{{ llm_option }}</option>
+                {% endfor %}
+                <!-- Add more LLMs manually or dynamically later -->
+            </select>
+        </div>
+
+        <div>
+            <label for="algorithm">Select Algorithm:</label>
+            <select name="algorithm" id="algorithm" required>
+                 {% for algo_option in algorithms %}
+                    <option value="{{ algo_option }}">{{ algo_option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
         <button type="submit">Run Benchmark</button>
     </form>
 
