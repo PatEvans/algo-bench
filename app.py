@@ -8,7 +8,8 @@ app = Flask(__name__)
 app.secret_key = 'super secret key' # Change this to a random secret key, maybe from env var
 
 # Define available LLMs and Algorithms (can be moved to config later)
-AVAILABLE_LLMS = ["dummy_llm"] # Add real LLM identifiers here
+PYTHON_SORTED_BENCHMARK = "Python sorted()"
+AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "dummy_llm"] # Add real LLM identifiers here
 AVAILABLE_ALGORITHMS = ["Bubble Sort", "Quick Sort", "Merge Sort", "Insertion Sort"]
 
 
@@ -32,7 +33,13 @@ def run_benchmark_background(llm_name, algorithm_name):
     """Function to run benchmark in a separate thread."""
     print(f"Starting background benchmark: {llm_name} - {algorithm_name}")
     try:
-        result = benchmark.run_single_benchmark(llm_name, algorithm_name)
+        if llm_name == PYTHON_SORTED_BENCHMARK:
+            # Run benchmark using Python's built-in sorted()
+            result = benchmark.run_python_sorted_benchmark(algorithm_name)
+        else:
+            # Run benchmark using LLM generation
+            result = benchmark.run_single_benchmark(llm_name, algorithm_name)
+
         database.save_result(result)
         print(f"Finished background benchmark: {llm_name} - {algorithm_name}")
     except Exception as e:

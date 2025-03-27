@@ -175,10 +175,68 @@ def run_single_benchmark(llm_name: str, algorithm_name: str) -> dict:
         'generated_code': generated_code # Optionally store the code
     }
 
-# Example usage
-if __name__ == '__main__':
-    result = run_single_benchmark('dummy_llm', 'Bubble Sort')
-    print("\nBenchmark Result:\n", result)
 
-    result_quick = run_single_benchmark('dummy_llm', 'Quick Sort')
-    print("\nBenchmark Result:\n", result_quick)
+def run_python_sorted_benchmark(algorithm_name: str) -> dict:
+    """
+    Runs a benchmark using Python's built-in sorted() function.
+
+    Args:
+        algorithm_name: The conceptual algorithm name (used for labeling, not execution).
+
+    Returns:
+        A dictionary containing benchmark results.
+    """
+    print(f"Running Python sorted() benchmark (labeled as {algorithm_name})...")
+    results = {
+        'llm': PYTHON_SORTED_BENCHMARK, # Use the constant defined in app.py or define locally
+        'algorithm': algorithm_name,
+        'correctness': 100.0, # sorted() is assumed correct
+        'avg_time_ms': None,
+        'baseline_avg_time_ms': None, # Baseline is itself in this case
+        'error': None,
+        'generated_code': "N/A - Python sorted()"
+    }
+
+    try:
+        test_cases = generate_test_cases()
+    except Exception as e:
+        results['error'] = f"Failed to generate test cases: {e}"
+        return results
+
+    if not test_cases:
+        results['error'] = "No test cases generated."
+        return results
+
+    total_time = 0
+    try:
+        for test_case in test_cases:
+            baseline_input = list(test_case) # Ensure original is not modified
+            start_time = time.perf_counter()
+            _ = sorted(baseline_input) # Execute and time sorted()
+            end_time = time.perf_counter()
+            total_time += (end_time - start_time)
+
+        avg_time = (total_time / len(test_cases)) * 1000
+        results['avg_time_ms'] = avg_time
+        # Since this *is* the baseline, set baseline time to the same value
+        results['baseline_avg_time_ms'] = avg_time
+
+    except Exception as e:
+        results['error'] = f"Error during Python sorted() execution: {e}"
+        results['correctness'] = None # Mark correctness as unknown if execution fails
+
+    return results
+
+
+# Example usage needs the constant defined in app.py or locally
+PYTHON_SORTED_BENCHMARK = "Python sorted()" # Define locally for example usage
+
+if __name__ == '__main__':
+    result_llm = run_single_benchmark('dummy_llm', 'Bubble Sort')
+    print("\nLLM Benchmark Result:\n", result_llm)
+
+    result_baseline = run_python_sorted_benchmark('Bubble Sort') # Label baseline run
+    print("\nPython sorted() Benchmark Result:\n", result_baseline)
+
+    # result_quick = run_single_benchmark('dummy_llm', 'Quick Sort')
+    # print("\nBenchmark Result:\n", result_quick)
