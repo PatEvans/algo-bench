@@ -17,18 +17,44 @@ def create_sort_prompt(algorithm_name: str) -> str:
     """Creates a prompt to ask an LLM for a specific sorting algorithm."""
     return f"Generate a Python function named `sort_algorithm` that implements {algorithm_name}. The function should take a list of numbers as input and return a new sorted list."
 
-def generate_test_cases() -> list[list[int]]:
-    """Generates a list of test cases for sorting algorithms."""
-    return [
-        [],
-        [1],
-        [1, 2, 3, 4, 5],
-        [5, 4, 3, 2, 1],
-        [3, 1, 4, 1, 5, 9, 2, 6],
-        [random.randint(0, 1000) for _ in range(100)], # Larger random list
-        [-5, 0, -10, 5, -1],
-        [2, 2, 1, 1, 3, 3], # Duplicates
+def generate_test_cases(size_small=10, size_medium=100, size_large=1000, num_cases=5) -> list[list[int | float]]:
+    """Generates a diverse list of test cases for sorting algorithms."""
+    cases = [
+        [],                             # Empty list
+        [1],                            # Single element
+        list(range(size_small)),        # Already sorted (small)
+        list(range(size_small, 0, -1)), # Reversed (small)
+        [3, 1, 4, 1, 5, 9, 2, 6],       # Basic unsorted
+        [2] * size_small,               # All identical elements
+        [-5, 0, -10, 5, -1, 0],         # With negatives and zero
+        [3.14, -0.5, 2.71, 1.61, 0.0],  # With floats
     ]
+
+    # Add random cases of different sizes
+    for size in [size_small, size_medium, size_large]:
+        for _ in range(num_cases):
+            # Random integers
+            cases.append([random.randint(-size, size) for _ in range(size)])
+            # Random floats
+            cases.append([random.uniform(-size, size) for _ in range(size)])
+
+    # Add nearly sorted cases
+    for size in [size_medium, size_large]:
+        nearly_sorted = list(range(size))
+        for _ in range(size // 10): # Swap 10% of elements
+            idx1, idx2 = random.sample(range(size), 2)
+            nearly_sorted[idx1], nearly_sorted[idx2] = nearly_sorted[idx2], nearly_sorted[idx1]
+        cases.append(nearly_sorted)
+
+    # Add reversed large case
+    cases.append(list(range(size_large, 0, -1)))
+
+    # Add case with many duplicates
+    cases.append([random.choice([1, 2, 3, 4, 5]) for _ in range(size_large)])
+
+
+    print(f"Generated {len(cases)} test cases.")
+    return cases
 
 def evaluate_algorithm(generated_code: str) -> dict:
     """
@@ -109,8 +135,9 @@ def run_single_benchmark(llm_name: str, algorithm_name: str) -> dict:
         'algorithm': algorithm_name,
         'correctness': evaluation.get('correctness'),
         'avg_time_ms': evaluation.get('avg_time_ms'),
+        'baseline_avg_time_ms': evaluation.get('baseline_avg_time_ms'),
         'error': evaluation.get('error'),
-        # 'generated_code': generated_code # Optionally store the code
+        'generated_code': generated_code # Optionally store the code
     }
 
 # Example usage

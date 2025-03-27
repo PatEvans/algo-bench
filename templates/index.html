@@ -31,7 +31,8 @@
                     <th>LLM</th>
                     <th>Algorithm</th>
                     <th>Correctness (%)</th>
-                    <th>Avg. Time (ms)</th>
+                    <th>LLM Avg. Time (ms)</th>
+                    <th>Baseline Avg. Time (ms)</th>
                     <th>Error</th>
                     <!-- Optional: Add column for viewing code -->
                 </tr>
@@ -44,6 +45,7 @@
                         <td>{{ result.algorithm }}</td>
                         <td>{{ '%.2f'|format(result.correctness) if result.correctness is not none else 'N/A' }}</td>
                         <td>{{ '%.4f'|format(result.avg_time_ms) if result.avg_time_ms is not none else 'N/A' }}</td>
+                        <td>{{ '%.4f'|format(result.baseline_avg_time_ms) if result.baseline_avg_time_ms is not none else 'N/A' }}</td>
                         <td class="{{ 'error' if result.error else '' }}">{{ result.error if result.error else 'None' }}</td>
                     </tr>
                 {% endfor %}

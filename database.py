@@ -24,8 +24,9 @@ def init_db():
             llm TEXT NOT NULL,
             algorithm TEXT NOT NULL,
             correctness REAL, -- Percentage (0-100)
-            avg_time_ms REAL, -- Average execution time in milliseconds
-            error TEXT, -- Store any errors encountered
+            avg_time_ms REAL, -- Average execution time in milliseconds for LLM code (on correct runs)
+            baseline_avg_time_ms REAL, -- Average execution time in milliseconds for Python's sorted()
+            error TEXT, -- Store any errors encountered during generation or execution
             generated_code TEXT -- Optionally store the full generated code
         )
     ''')
@@ -38,13 +39,14 @@ def save_result(result_data: dict):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO results (llm, algorithm, correctness, avg_time_ms, error, generated_code)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO results (llm, algorithm, correctness, avg_time_ms, baseline_avg_time_ms, error, generated_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', (
         result_data.get('llm'),
         result_data.get('algorithm'),
         result_data.get('correctness'),
         result_data.get('avg_time_ms'),
+        result_data.get('baseline_avg_time_ms'),
         result_data.get('error'),
         result_data.get('generated_code') # Might be None if not stored
     ))
@@ -71,10 +73,11 @@ if __name__ == '__main__':
         'algorithm': 'test_sort',
         'correctness': 90.0,
         'avg_time_ms': 15.5,
+        'baseline_avg_time_ms': 1.2, # Example baseline time
         'error': None,
         'generated_code': 'def sort_algorithm(arr): return sorted(arr)'
     }
-    # save_result(test_result) # Uncomment to save test data
+    # save_result(test_result) # Uncomment to save test data if needed after schema change
     all_data = get_all_results()
     print("\nAll results from DB:")
     for row in all_data:
