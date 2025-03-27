@@ -17,43 +17,66 @@ def create_sort_prompt(algorithm_name: str) -> str:
     """Creates a prompt to ask an LLM for a specific sorting algorithm."""
     return f"Generate a Python function named `sort_algorithm` that implements {algorithm_name}. The function should take a list of numbers as input and return a new sorted list."
 
-def generate_test_cases(size_small=10, size_medium=100, size_large=1000, num_cases=5) -> list[list[int | float]]:
-    """Generates a diverse list of test cases for sorting algorithms."""
+def generate_test_cases(size_small=10, size_medium=1000, size_large=100000, num_cases_per_type=2) -> list[list[int]]:
+    """
+    Generates integer test cases based on specified patterns:
+    - Randomized (within a range)
+    - Duplicates (many repeating elements)
+    - Sorted (ascending)
+    - Reversed (descending)
+
+    Args:
+        size_small: Size for small test cases.
+        size_medium: Size for medium test cases.
+        size_large: Size for large test cases.
+                    (Note: Very large sizes like 10M might exceed memory/time limits).
+        num_cases_per_type: Number of random/duplicate cases to generate per size.
+
+    Returns:
+        A list of lists, where each inner list is an integer test case.
+    """
     cases = [
-        [],                             # Empty list
-        [1],                            # Single element
-        list(range(size_small)),        # Already sorted (small)
-        list(range(size_small, 0, -1)), # Reversed (small)
-        [3, 1, 4, 1, 5, 9, 2, 6],       # Basic unsorted
-        [2] * size_small,               # All identical elements
-        [-5, 0, -10, 5, -1, 0],         # With negatives and zero
-        [3.14, -0.5, 2.71, 1.61, 0.0],  # With floats
+        [],    # Empty list
+        [5],   # Single element
     ]
+    sizes = {'small': size_small, 'medium': size_medium, 'large': size_large}
+    # Define range for random numbers, e.g., based on size
+    min_val, max_val = -10000, 10000
 
-    # Add random cases of different sizes
-    for size in [size_small, size_medium, size_large]:
-        for _ in range(num_cases):
-            # Random integers
-            cases.append([random.randint(-size, size) for _ in range(size)])
-            # Random floats
-            cases.append([random.uniform(-size, size) for _ in range(size)])
+    for name, size in sizes.items():
+        if size == 0: continue # Skip size 0 if specified
 
-    # Add nearly sorted cases
-    for size in [size_medium, size_large]:
-        nearly_sorted = list(range(size))
-        for _ in range(size // 10): # Swap 10% of elements
-            idx1, idx2 = random.sample(range(size), 2)
-            nearly_sorted[idx1], nearly_sorted[idx2] = nearly_sorted[idx2], nearly_sorted[idx1]
-        cases.append(nearly_sorted)
+        print(f"Generating cases for size: {name} ({size})...")
 
-    # Add reversed large case
-    cases.append(list(range(size_large, 0, -1)))
+        # 1. Randomized
+        for i in range(num_cases_per_type):
+            random_case = [random.randint(min_val, max_val) for _ in range(size)]
+            cases.append(random_case)
+            print(f"  - Added random case {i+1}")
 
-    # Add case with many duplicates
-    cases.append([random.choice([1, 2, 3, 4, 5]) for _ in range(size_large)])
+        # 2. With Duplicates (e.g., numbers from a smaller range)
+        duplicate_range_max = max(1, size // 10) # Ensure range is at least 1
+        for i in range(num_cases_per_type):
+            duplicate_case = [random.randint(0, duplicate_range_max) for _ in range(size)]
+            cases.append(duplicate_case)
+            print(f"  - Added duplicate case {i+1}")
 
+        # 3. Sorted (Ascending)
+        sorted_case = list(range(size))
+        cases.append(sorted_case)
+        print(f"  - Added sorted case")
 
-    print(f"Generated {len(cases)} test cases.")
+        # 4. Reversed (Descending)
+        reversed_case = list(range(size, 0, -1))
+        cases.append(reversed_case)
+        print(f"  - Added reversed case")
+
+    # Example of adding a very large case (use with caution!)
+    # size_xl = 10_000_000
+    # print(f"Generating XL random case ({size_xl})...")
+    # cases.append([random.randint(min_val, max_val) for _ in range(size_xl)])
+
+    print(f"Generated a total of {len(cases)} test cases.")
     return cases
 
 def evaluate_algorithm(generated_code: str) -> dict:
