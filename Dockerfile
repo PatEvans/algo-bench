@@ -24,9 +24,9 @@ COPY templates/ ./templates/
 
 # Generate the test suite during the image build process
 # This runs the __main__ block in benchmark.py with the --generate-suite flag
-# It will use the default parameters defined in benchmark.py unless overridden here
+# It will use the default parameters defined in test_suite_generator.py unless overridden here
 # The output file 'test_suite.json' will be created inside the /app directory in the image
-RUN python benchmark.py --generate-suite --suite-file test_suite.json
+RUN python test_suite_generator.py --generate-suite --suite-file test_suite.json
 
 # Verify the test suite file was created (optional, useful for debugging build issues)
 RUN ls -lh test_suite.json
