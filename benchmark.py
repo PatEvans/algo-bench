@@ -142,12 +142,18 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         docker_client = docker.from_env(timeout=10)
         docker_client.ping()
         print("Successfully connected to Docker daemon.")
+        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Docker client initialized.'})
         # Ensure image exists
         try:
             docker_client.images.get(DOCKER_IMAGE)
+            print(f"Docker image {DOCKER_IMAGE} found locally.")
+            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image {DOCKER_IMAGE} found.'})
         except ImageNotFound:
             print(f"Pulling Docker image: {DOCKER_IMAGE}...")
+            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Pulling Docker image {DOCKER_IMAGE}...'})
             docker_client.images.pull(DOCKER_IMAGE)
+            print(f"Docker image {DOCKER_IMAGE} pulled.")
+            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image {DOCKER_IMAGE} pulled.'})
         print(f"Using Docker image: {DOCKER_IMAGE}")
     except (DockerConnectionError, APIError, Exception) as e:
         results['error'] = f"Docker initialization failed: {e}. Is Docker running?"
@@ -249,6 +255,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Ensure container is stopped and removed at the end
            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
            print(f"Container {container.short_id} started.")
+           if progress_callback: progress_callback({'status': 'Setup', 'message': f'Container {container.short_id} started.'})
 
            # --- Create sandbox directory inside container ---
            # Although working_dir is set, explicitly create it for clarity and put_archive target
@@ -271,6 +278,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Copy the archive to the container
            container.put_archive(path=sandbox_dir, data=tar_stream)
            print("Files copied.")
+           if progress_callback: progress_callback({'status': 'Setup', 'message': 'Files copied to container.'})
 
            # Optional: Short delay after copy might still be beneficial? Unlikely needed now.
            # time.sleep(0.1)
