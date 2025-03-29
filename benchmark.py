@@ -292,8 +292,10 @@ if __name__ == "__main__":
         # Write the final JSON output to the designated file
         if final_output_json is not None:
              try:
+                 print(f"--- Attempting to write output file: {OUTPUT_FILE} (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
                  with open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
                      f_out.write(final_output_json)
+                 print(f"--- Successfully wrote output file (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
              except Exception as write_e:
                  error_message += f"\\nCRITICAL: Failed to write output JSON to {OUTPUT_FILE}: {write_e}"
                  error_message += f"\\nCRITICAL: Failed to write output JSON to {OUTPUT_FILE}: {write_e}"
@@ -307,8 +309,10 @@ if __name__ == "__main__":
                   final_error_content = f"(Script exited with code {exit_code} but produced no specific error message or captured output)"
 
              try:
+                 print(f"--- Attempting to write error file: {ERROR_FILE} (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
                  with open(ERROR_FILE, 'w', encoding='utf-8') as f_err:
                      f_err.write(final_error_content)
+                 print(f"--- Successfully wrote error file (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
              except Exception as write_e:
                  # If we can't even write the error, print to original stderr as last resort
                  print(f"CRITICAL: Failed to write error log to {ERROR_FILE}: {write_e}", file=sys.stderr)
