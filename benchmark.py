@@ -510,7 +510,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
             results['avg_time_ms'] = (overall_llm_time / overall_llm_runs_timed) * 1000
 
        # Per-category results
-       for category, stats in category_results.items():
+        for category, stats in category_results.items():
            cat_correctness = 0.0
            if stats['case_count'] > 0:
                cat_correctness = (stats['correct_count'] / stats['case_count']) * 100
@@ -680,8 +680,8 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
              results['avg_time_ms'] = 0.0
              results['baseline_avg_time_ms'] = 0.0
 
-       # Per-category results
-       for category, stats in category_results.items():
+        # Per-category results
+        for category, stats in category_results.items():
            cat_avg_baseline_time = None
            if stats['case_count'] > 0:
                cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000
@@ -738,7 +738,7 @@ if __name__ == '__main__':
         # --- Run example with fixed Merge Sort code ---
         print("\nRunning example benchmark with fixed Merge Sort code...")
 
-            EXAMPLE_MERGE_SORT_CODE = """
+        EXAMPLE_MERGE_SORT_CODE = """
 import sys
 from typing import List, TypeVar
 
@@ -786,16 +786,16 @@ def sort_algorithm(arr: List[T]) -> List[T]:
     return merged
 """
             # Run the benchmark using the fixed code
-            result_example = run_single_benchmark(
+        result_example = run_single_benchmark(
                 llm_name="Example Merge Sort", # Use a descriptive name
                 generated_code=EXAMPLE_MERGE_SORT_CODE,
                 categorized_test_cases=test_suite
                 # Add progress_callback=print if you want to see progress updates
             )
-            print("\nExample Merge Sort Benchmark Result:\n", json.dumps(result_example, indent=2))
+        print("\nExample Merge Sort Benchmark Result:\n", json.dumps(result_example, indent=2))
 
 
-        except FileNotFoundError:
+    except FileNotFoundError:
             print(f"Test suite file '{args.suite_file}' not found. Generate it first using: python test_suite_generator.py --generate-suite")
-        except Exception as e:
+    except Exception as e:
             print(f"An error occurred during example benchmark run: {e}")
