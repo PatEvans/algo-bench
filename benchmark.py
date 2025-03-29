@@ -409,10 +409,10 @@ if __name__ == "__main__":
                    cat_stats['case_count'] += 1
 
                    # --- Prepare data for callback ---
-                    progress_data = {
-                        'current_case': current_overall_case_num,
-                        'total_cases': total_overall_cases_calculated,
-                        'category': category,
+                   progress_data = {
+                       'current_case': current_overall_case_num,
+                       'total_cases': total_overall_cases_calculated,
+                       'category': category,
                         'category_case_num': i + 1,
                         'category_total_cases': num_cases_in_category,
                         'status': 'Running',
