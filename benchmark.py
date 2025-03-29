@@ -420,11 +420,11 @@ if __name__ == "__main__":
                         'output_snippet': None,
                         'error': None
                     }
-                    if progress_callback:
-                        progress_callback(progress_data) # Report start of case processing
+                   if progress_callback:
+                       progress_callback(progress_data) # Report start of case processing
 
-                    # Prepare inputs
-                    baseline_input = list(test_case) # For baseline timing
+                   # Prepare inputs
+                   baseline_input = list(test_case) # For baseline timing
                     expected_output = sorted(test_case) # Ground truth
                     input_json = json.dumps(test_case)
 
