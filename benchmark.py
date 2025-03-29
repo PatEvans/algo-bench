@@ -405,7 +405,8 @@ def run_python_sorted_benchmark(algorithm_name: str, progress_callback: Optional
                     'category_total_cases': num_cases_in_category,
                     'status': 'Running',
                     'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                    'output_snippet': 'N/A (Baseline)', # Baseline output is implicitly correct
+                    # Calculate the expected output snippet for baseline
+                    'output_snippet': repr(sorted(test_case)[:10]) + ('...' if len(test_case) > 10 else ''),
                     'error': None
                 }
                 # Report start of case processing (optional for baseline, but consistent)
