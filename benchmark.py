@@ -429,12 +429,12 @@ if __name__ == "__main__":
                    input_json = json.dumps(test_case)
 
                    # --- Execute code inside the running container using exec_run ---
-                    actual_output = None
-                    llm_error_str = None
-                    current_llm_time_ms = None # Time reported by the container script
-                    is_correct = False
+                   actual_output = None
+                   llm_error_str = None
+                   current_llm_time_ms = None # Time reported by the container script
+                   is_correct = False
 
-                    host_exec_start_time = time.perf_counter() # Host-side timing for exec_run call itself
+                   host_exec_start_time = time.perf_counter() # Host-side timing for exec_run call itself
 
                    try:
                        # Command to execute the runner script file directly inside the container
