@@ -854,18 +854,67 @@ if __name__ == '__main__':
             result_baseline = run_python_sorted_benchmark(categorized_test_cases=test_suite) # Run baseline
             print("\nPython sorted() Benchmark Result:\n", json.dumps(result_baseline, indent=2))
 
+            # --- Run example with fixed Merge Sort code ---
+            print("\nRunning example benchmark with fixed Merge Sort code...")
+
+            EXAMPLE_MERGE_SORT_CODE = """
+import sys
+from typing import List, TypeVar
+
+# Increase recursion depth limit for potentially deep recursion with large lists
+try:
+    sys.setrecursionlimit(2000)
+except Exception:
+    pass
+
+T = TypeVar('T')
+
+def sort_algorithm(arr: List[T]) -> List[T]:
+    # Base Case
+    if len(arr) <= 1:
+        return arr[:]
+
+    # Divide
+    mid = len(arr) // 2
+    left_half = arr[:mid]
+    right_half = arr[mid:]
+
+    # Conquer
+    sorted_left = sort_algorithm(left_half)
+    sorted_right = sort_algorithm(right_half)
+
+    # Combine (Merge)
+    merged = []
+    left_idx, right_idx = 0, 0
+    while left_idx < len(sorted_left) and right_idx < len(sorted_right):
+        if sorted_left[left_idx] <= sorted_right[right_idx]:
+            merged.append(sorted_left[left_idx])
+            left_idx += 1
+        else:
+            merged.append(sorted_right[right_idx])
+            right_idx += 1
+
+    # Append Remaining
+    while left_idx < len(sorted_left):
+        merged.append(sorted_left[left_idx])
+        left_idx += 1
+    while right_idx < len(sorted_right):
+        merged.append(sorted_right[right_idx])
+        right_idx += 1
+
+    return merged
+"""
+            # Run the benchmark using the fixed code
+            result_example = run_single_benchmark(
+                llm_name="Example Merge Sort", # Use a descriptive name
+                generated_code=EXAMPLE_MERGE_SORT_CODE,
+                categorized_test_cases=test_suite
+                # Add progress_callback=print if you want to see progress updates
+            )
+            print("\nExample Merge Sort Benchmark Result:\n", json.dumps(result_example, indent=2))
+
+
         except FileNotFoundError:
             print(f"Test suite file '{args.suite_file}' not found. Generate it first using --generate-suite.")
         except Exception as e:
             print(f"An error occurred during example benchmark run: {e}")
-
-
-    # Example if running another LLM test (assuming test_suite is loaded)
-    # try:
-    #     if 'test_suite' in locals():
-    #          result_other = run_single_benchmark('some_other_llm', categorized_test_cases=test_suite)
-    #          print("\nOther LLM Benchmark Result:\n", json.dumps(result_other, indent=2))
-    # except NameError:
-    #      print("Cannot run other LLM example without loaded test suite.")
-    # except Exception as e:
-    #      print(f"An error occurred during other LLM benchmark run: {e}")
