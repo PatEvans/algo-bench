@@ -303,13 +303,24 @@ def load_and_run_sort():
         captured_stderr.close()
 
         # Combine captured stdout/stderr into error if an error occurred or if they contain data
-        if result['error']:
-            if result['stdout']: result['error'] += f"\\n--- Captured Stdout ---\\n{result['stdout']}"
-            if result['stderr']: result['error'] += f"\\n--- Captured Stderr ---\n{result['stderr']}"
-        elif result['stdout'] or result['stderr']: # No primary error, but stray output/errors
-             result['error'] = "(No primary exception, but captured output found)"
-             if result['stdout']: result['error'] += f"\\n--- Captured Stdout ---\\n{result['stdout']}"
-             if result['stderr']: result['error'] += f"\\n--- Captured Stderr ---\\n{result['stderr']}"
+        # Append safely to avoid syntax errors if captured output contains problematic characters
+        combined_error = result['error'] if result['error'] else ""
+        captured_stdout_val = result.get('stdout', '')
+        captured_stderr_val = result.get('stderr', '')
+
+        if combined_error:
+            if captured_stdout_val:
+                combined_error += "\\n--- Captured Stdout ---\\n" + captured_stdout_val
+            if captured_stderr_val:
+                combined_error += "\\n--- Captured Stderr ---\\n" + captured_stderr_val
+        elif captured_stdout_val or captured_stderr_val: # No primary error, but stray output/errors
+             combined_error = "(No primary exception, but captured output found)"
+             if captured_stdout_val:
+                 combined_error += "\\n--- Captured Stdout ---\\n" + captured_stdout_val
+             if captured_stderr_val:
+                 combined_error += "\\n--- Captured Stderr ---\\n" + captured_stderr_val
+
+        result['error'] = combined_error # Update the result dict with the combined error string
 
         # Print the final result dictionary as JSON to the original stdout
         # Ensure output is serializable (it should be if sort_algorithm returns a list)
