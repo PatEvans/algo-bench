@@ -146,6 +146,13 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         docker_client.ping()
         print("Successfully connected to Docker daemon.")
         if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Connecting Docker', 'message': 'Docker client connected.'})
+
+        # Increase the default timeout for API calls (including streaming reads)
+        # Default is often 60s, but read timeouts might be shorter or hit socket defaults.
+        # Let's set it explicitly higher for potentially long benchmark runs.
+        docker_client.api.timeout = 600 # Set timeout to 600 seconds (10 minutes)
+        print(f"Docker client API timeout set to {docker_client.api.timeout} seconds.")
+
         # Ensure image exists
         try:
             docker_client.images.get(DOCKER_IMAGE)
