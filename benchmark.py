@@ -274,13 +274,10 @@ def load_and_run_sort():
              except Exception as list_e:
                  dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
              raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
-        # --- End check ---
+       # --- End check ---
 
-        # Add /sandbox to the beginning of the Python path
-        sys.path.insert(0, '/sandbox')
-
-        # Import the module directly
-        try:
+       # Import the module directly (should work if workdir=/sandbox)
+       try:
             import llm_sort
         except ModuleNotFoundError:
              # This shouldn't happen if the file exists and path is set, but catch defensively
