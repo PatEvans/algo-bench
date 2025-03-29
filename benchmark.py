@@ -292,13 +292,19 @@ if __name__ == "__main__":
                      f_out.write(final_output_json)
              except Exception as write_e:
                  error_message += f"\\nCRITICAL: Failed to write output JSON to {OUTPUT_FILE}: {write_e}"
+                 error_message += f"\\nCRITICAL: Failed to write output JSON to {OUTPUT_FILE}: {write_e}"
                  exit_code = 2 # Different exit code for I/O failure
 
-        # Write any accumulated errors/prints to the error file
-        if error_message and error_message.strip(): # Check if there's anything to write
+        # Write any accumulated errors/prints to the error file if an error occurred
+        if exit_code != 0:
+             final_error_content = error_message.strip()
+             # If exit code is non-zero but the message is empty, provide a default
+             if not final_error_content:
+                  final_error_content = f"(Script exited with code {exit_code} but produced no specific error message or captured output)"
+
              try:
                  with open(ERROR_FILE, 'w', encoding='utf-8') as f_err:
-                     f_err.write(error_message.strip())
+                     f_err.write(final_error_content)
              except Exception as write_e:
                  # If we can't even write the error, print to original stderr as last resort
                  print(f"CRITICAL: Failed to write error log to {ERROR_FILE}: {write_e}", file=sys.stderr)
