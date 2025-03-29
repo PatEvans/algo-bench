@@ -259,6 +259,10 @@ if __name__ == "__main__":
         if 'sort_algorithm' in locals() and callable(sort_algorithm):
             # Call the LLM function. Any prints/errors inside it will go to captured streams.
             output_list = sort_algorithm(input_list)
+            # --- DEBUG ---
+            # Note: This print goes to the *captured* stderr
+            print(f"--- sort_algorithm returned: {repr(output_list)} (Redirected stderr) ---", file=sys.stderr, flush=True)
+            # --- END DEBUG ---
 
             # Serialize the actual result to JSON
             final_output_json = json.dumps(output_list)
@@ -268,6 +272,10 @@ if __name__ == "__main__":
              raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
 
     except Exception as e:
+        # --- DEBUG ---
+        # Note: This print goes to the *captured* stderr, which gets added to error_message later
+        print(f"--- EXCEPTION CAUGHT in main try block! Type: {type(e).__name__} (Redirected stderr) ---", file=sys.stderr, flush=True)
+        # --- END DEBUG ---
         # Capture any exception during execution
         error_message = f"Error in generated script execution: {type(e).__name__}: {e}\\n"
         error_message += traceback.format_exc()
