@@ -323,6 +323,7 @@ if __name__ == "__main__":
         captured_stdout.close()
         captured_stderr.close()
 
+    print(f"--- Exiting script with code: {exit_code} (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
     sys.exit(exit_code)
 """
 
