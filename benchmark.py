@@ -425,10 +425,10 @@ if __name__ == "__main__":
 
                    # Prepare inputs
                    baseline_input = list(test_case) # For baseline timing
-                    expected_output = sorted(test_case) # Ground truth
-                    input_json = json.dumps(test_case)
+                   expected_output = sorted(test_case) # Ground truth
+                   input_json = json.dumps(test_case)
 
-                    # --- Execute code inside the running container using exec_run ---
+                   # --- Execute code inside the running container using exec_run ---
                     actual_output = None
                     llm_error_str = None
                     current_llm_time_ms = None # Time reported by the container script
