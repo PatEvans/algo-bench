@@ -11,6 +11,8 @@
         #progress-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; font-size: 0.9em; }
         #progress-list li { border-bottom: 1px dashed #eee; padding: 5px 0; }
         #progress-list li:last-child { border-bottom: none; }
+        .progress-bar-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 5px; margin-bottom: 15px; height: 20px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 100%; background-color: #4caf50; text-align: center; line-height: 20px; color: white; font-size: 0.8em; transition: width 0.3s ease-in-out; }
         .status-correct { color: green; }
         .status-incorrect { color: orange; }
         .status-error { color: red; font-weight: bold; }
@@ -32,6 +34,9 @@
     <div id="progress-container">
         <div id="status">Status: Initializing...</div>
         <div id="overall-progress">Progress: 0 / ?</div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar">0%</div>
+        </div>
         <div id="generated-code-area" style="margin-top: 15px; display: none;">
             <h3>Generated Code:</h3>
             <pre><code id="generated-code-content" style="background: #eee; padding: 10px; display: block; white-space: pre-wrap; word-wrap: break-word;"></code></pre>
@@ -54,20 +59,23 @@
         const resultDetailsElement = document.getElementById('result-details');
         const generatedCodeArea = document.getElementById('generated-code-area');
         const generatedCodeContent = document.getElementById('generated-code-content');
+        const progressBarElement = document.getElementById('progress-bar'); // Get progress bar element
         let intervalId = null;
         let lastUpdateCount = 0;
         let codeDisplayed = false; // Flag to prevent redisplaying code
+        let displayedErrorIndices = new Set(); // Keep track of displayed error/incorrect items by index
 
         function formatProgressItem(item) {
             let statusClass = '';
             let statusText = item.status || 'Unknown';
-            if (statusText.startsWith('Correct')) statusClass = 'status-correct';
-            else if (statusText === 'Incorrect') statusClass = 'status-incorrect';
+            // Note: 'Correct' status updates are no longer sent from the backend for individual cases
+            if (statusText === 'Incorrect') statusClass = 'status-incorrect';
             else if (statusText === 'Error') statusClass = 'status-error';
-            else if (statusText === 'Running') statusClass = 'status-running';
+            // 'Running' status might still appear in the stream for overall progress, but we won't list it here.
 
+            // Only format details for Incorrect or Error statuses for the list
             let details = `Case ${item.current_case || '?'}/${item.total_cases || '?'}`;
-            if (item.category) {
+             if (item.category) {
                 details += ` (Category: ${item.category}`;
                 if (item.category_case_num && item.category_total_cases) {
                      details += ` ${item.category_case_num}/${item.category_total_cases}`;
