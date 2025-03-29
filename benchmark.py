@@ -455,9 +455,17 @@ if __name__ == "__main__":
                     # 2. Run Docker container
                     llm_start_time = time.perf_counter()
 
+                    # Command to check for script existence before running
+                    container_command = [
+                        "sh",
+                        "-c",
+                        f"test -f {script_path_cont} && python {script_path_cont} || (echo '--- ERROR: {script_path_cont} not found or not a file in container! ---' >&2; exit 2)"
+                    ]
+
                     container = docker_client.containers.run(
                         image=DOCKER_IMAGE,
-                        command=["python", script_path_cont],
+                        # command=["python", script_path_cont], # Original command
+                        command=container_command, # Use the wrapper command
                         volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'rw'}}, # Mount RW for output/error files
                         working_dir=sandbox_dir,
                         stdout=False, # Don't capture stdout directly, use files
