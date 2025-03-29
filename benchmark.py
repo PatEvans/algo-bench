@@ -335,79 +335,76 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        output_bytes = b""
                        parsed_result = None
 
+                       # Write input JSON to stdin stream using sendall
+                       input_bytes = input_json.encode('utf-8')
+                       _sock_low_level.sendall(input_bytes)
+                       # IMPORTANT: Close the write half to signal EOF to the container's stdin.read()
+                       _sock_low_level.shutdown(socket.SHUT_WR)
+
+                       # Read Docker stream protocol (header + payload)
+                       output_bytes = b"" # Initialize to empty
                        try:
-                           # Write input JSON to stdin stream using sendall
-                           input_bytes = input_json.encode('utf-8')
-                           _sock_low_level.sendall(input_bytes)
-                           # IMPORTANT: Close the write half to signal EOF to the container's stdin.read()
-                           _sock_low_level.shutdown(socket.SHUT_WR)
+                           import struct # Needed for unpacking header
 
-                           # Read Docker stream protocol (header + payload)
-                           output_bytes = b"" # Initialize to empty
-                           try:
-                               import struct # Needed for unpacking header
+                           while True:
+                               # Read the 8-byte header
+                               header = _sock_low_level.recv(8)
+                               if not header:
+                                   break # Connection closed normally
 
-                               while True:
-                                   # Read the 8-byte header
-                                   header = _sock_low_level.recv(8)
-                                   if not header:
-                                       break # Connection closed normally
+                               if len(header) < 8:
+                                   llm_error_str = f"Socket error: Received incomplete stream header (got {len(header)} bytes)."
+                                   output_bytes = b"" # Discard potentially corrupt data
+                                   break
 
-                                   if len(header) < 8:
-                                       llm_error_str = f"Socket error: Received incomplete stream header (got {len(header)} bytes)."
-                                       output_bytes = b"" # Discard potentially corrupt data
-                                       break
+                               # Unpack the header (stream_type: 1 byte, size: 4 bytes big-endian)
+                               stream_type = header[0]
+                               payload_size = struct.unpack('>I', header[4:])[0]
 
-                                   # Unpack the header (stream_type: 1 byte, size: 4 bytes big-endian)
-                                   stream_type = header[0]
-                                   payload_size = struct.unpack('>I', header[4:])[0]
+                               # Read the payload
+                               payload = b""
+                               remaining_size = payload_size
+                               while remaining_size > 0:
+                                   chunk = _sock_low_level.recv(min(remaining_size, 4096))
+                                   if not chunk:
+                                       llm_error_str = f"Socket error: Connection closed while reading payload (expected {payload_size} bytes, got {len(payload)})."
+                                       output_bytes = b"" # Discard partial payload
+                                       break # Exit inner loop
+                                   payload += chunk
+                                   remaining_size -= len(chunk)
 
-                                   # Read the payload
-                                   payload = b""
-                                   remaining_size = payload_size
-                                   while remaining_size > 0:
-                                       chunk = _sock_low_level.recv(min(remaining_size, 4096))
-                                       if not chunk:
-                                           llm_error_str = f"Socket error: Connection closed while reading payload (expected {payload_size} bytes, got {len(payload)})."
-                                           output_bytes = b"" # Discard partial payload
-                                           break # Exit inner loop
-                                       payload += chunk
-                                       remaining_size -= len(chunk)
+                               if llm_error_str: # Check if inner loop broke due to error
+                                   break # Exit outer loop
 
-                                   if llm_error_str: # Check if inner loop broke due to error
-                                       break # Exit outer loop
+                               # We only care about the stdout stream (type 1) for the JSON result
+                               if stream_type == 1:
+                                   output_bytes = payload # Store the stdout payload
+                                   # Assume the first stdout payload is the complete JSON result
+                                   # and break the loop. If more output is expected, adjust logic.
+                                   break
+                               elif stream_type == 2:
+                                   # Log stderr for debugging if needed
+                                   print(f"DEBUG: Received stderr stream from container: {payload.decode('utf-8', errors='replace')}")
+                                   # Continue reading in case stdout follows stderr
+                               else:
+                                   # Ignore other stream types (e.g., stdin type 0)
+                                   print(f"DEBUG: Ignoring stream type {stream_type} with size {payload_size}")
+                                   # Continue reading
 
-                                   # We only care about the stdout stream (type 1) for the JSON result
-                                   if stream_type == 1:
-                                       output_bytes = payload # Store the stdout payload
-                                       # Assume the first stdout payload is the complete JSON result
-                                       # and break the loop. If more output is expected, adjust logic.
-                                       break
-                                   elif stream_type == 2:
-                                       # Log stderr for debugging if needed
-                                       print(f"DEBUG: Received stderr stream from container: {payload.decode('utf-8', errors='replace')}")
-                                       # Continue reading in case stdout follows stderr
-                                   else:
-                                       # Ignore other stream types (e.g., stdin type 0)
-                                       print(f"DEBUG: Ignoring stream type {stream_type} with size {payload_size}")
-                                       # Continue reading
-
-                           except socket.timeout:
-                               llm_error_str = f"Socket operation timed out after {SOCKET_TIMEOUT} seconds (LLM code likely too slow or hung)."
-                           except (socket.error, BrokenPipeError, OSError) as sock_err:
-                               llm_error_str = f"Socket error during exec stream read: {sock_err}"
-                           except struct.error as unpack_err:
-                               llm_error_str = f"Error unpacking Docker stream header: {unpack_err}. Header bytes: {repr(header)}"
-                           except Exception as stream_err:
-                               llm_error_str = f"Error during socket stream I/O: {stream_err}"
-                           finally:
-                               # Ensure socket is closed
-                               if _sock_low_level:
-                                   _sock_low_level.close()
-                               if _sock: # Close the high-level wrapper too
-                                   _sock.close()
-                           # Pass statement added to potentially resolve parser confusion after inner finally
-                           pass
+                       except socket.timeout:
+                           llm_error_str = f"Socket operation timed out after {SOCKET_TIMEOUT} seconds (LLM code likely too slow or hung)."
+                       except (socket.error, BrokenPipeError, OSError) as sock_err:
+                           llm_error_str = f"Socket error during exec stream read: {sock_err}"
+                       except struct.error as unpack_err:
+                           llm_error_str = f"Error unpacking Docker stream header: {unpack_err}. Header bytes: {repr(header)}"
+                       except Exception as stream_err:
+                           llm_error_str = f"Error during socket stream I/O: {stream_err}"
+                       finally:
+                           # Ensure socket is closed (Associated with the try block above for stream reading)
+                           if _sock_low_level:
+                               _sock_low_level.close()
+                           if _sock: # Close the high-level wrapper too
+                               _sock.close()
 
                        host_exec_end_time = time.perf_counter() # Timing remains similar
 
