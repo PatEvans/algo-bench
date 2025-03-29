@@ -22,24 +22,7 @@ EXAMPLE_CODE_OPTION = "Example Code"
 # Define the example code snippet (e.g., a simple bubble sort)
 EXAMPLE_CODE_SNIPPET = """
 def sort_algorithm(data):
-    '''Sorts a list of numbers using bubble sort.'''
-    n = len(data)
-    if n <= 1:
-        return data
-    # Traverse through all array elements
-    for i in range(n):
-        swapped = False
-        # Last i elements are already in place
-        for j in range(0, n-i-1):
-            # Traverse the array from 0 to n-i-1
-            # Swap if the element found is greater
-            # than the next element
-            if data[j] > data[j+1]:
-                data[j], data[j+1] = data[j+1], data[j]
-                swapped = True
-        # If no two elements were swapped by inner loop, then break
-        if not swapped:
-            break
+    data.sort()
     return data
 """
 AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, EXAMPLE_CODE_OPTION, "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
