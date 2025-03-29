@@ -209,25 +209,19 @@ import json
 import sys
 import json
 import io
-import os # Need os for writing to file descriptor
 import traceback # For better error reporting
+# No need for os module just for writing output anymore
 
 if __name__ == "__main__":
     exit_code = 0
-    # Get the original stdout file descriptor before any redirection
-    try:
-        original_stdout_fd = sys.stdout.fileno()
-    except io.UnsupportedOperation:
-        # Handle cases where stdout might not have a file descriptor (e.g., testing environments)
-        # Fallback or error handling might be needed here depending on requirements.
-        # For now, we'll print an error to stderr and exit.
-        print("Error: Could not get file descriptor for original stdout.", file=sys.stderr)
-        sys.exit(2) # Use a different exit code for this specific setup error
+    # Keep original streams
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
 
+    # Redirect Python's sys.stdout to capture potential prints from LLM code
     captured_stdout = io.StringIO()
-    # Redirect Python's sys.stdout to capture all prints from this point onwards
     sys.stdout = captured_stdout
-    # Keep sys.stderr as is, errors should go there.
+    # Keep sys.stderr pointing to the original stderr stream
 
     try:
         input_data_json = sys.stdin.read()
@@ -238,35 +232,34 @@ if __name__ == "__main__":
             output_list = sort_algorithm(input_list)
 
             # Serialize the actual result to JSON
-            output_json = json.dumps(output_list) + '\\n' # Add newline for robustness
+            output_json = json.dumps(output_list)
 
-            # Write the JSON result *directly* to the original stdout file descriptor,
-            # bypassing the redirected sys.stdout.
-            os.write(original_stdout_fd, output_json.encode('utf-8'))
+            # Print the JSON result *directly* to the original standard output stream
+            print(output_json, file=original_stdout) # Use the saved original stdout
 
         else:
-             # This error will be printed to stderr because stdout is redirected.
-             raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
+             # This error should go to stderr
+             print("Error: Function 'sort_algorithm' not found or not callable in generated code.", file=original_stderr)
+             exit_code = 1 # Indicate failure
 
     except Exception as e:
-        # Errors raised here will print their traceback to the original stderr.
-        print(f"Error in generated script execution:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr) # Print full traceback to stderr
+        # Errors raised here should print their traceback to the original stderr.
+        print(f"Error in generated script execution:", file=original_stderr)
+        traceback.print_exc(file=original_stderr) # Print full traceback to stderr
         exit_code = 1 # Indicate failure
     finally:
-        # Restore stdout to its original state (optional, as process is exiting)
-        sys.stdout = sys.__stdout__
+        # Restore stdout just in case (though process is exiting)
+        sys.stdout = original_stdout
 
         # Process the captured stdout (stray prints) and send to stderr
         stray_prints = captured_stdout.getvalue()
         if stray_prints:
-            print("\\n--- Captured Stdout (potential stray prints) ---", file=sys.stderr)
-            print(stray_prints, file=sys.stderr)
-            print("--- End Captured Stdout ---", file=sys.stderr)
+            print("\\n--- Captured Stdout (potential stray prints from LLM code) ---", file=original_stderr)
+            print(stray_prints, file=original_stderr)
+            print("--- End Captured Stdout ---", file=original_stderr)
 
         # Close the StringIO object
         captured_stdout.close()
-        # Do NOT close original_stdout_fd here, let the OS handle it.
 
     sys.exit(exit_code)
 """
