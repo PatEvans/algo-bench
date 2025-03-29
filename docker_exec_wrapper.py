@@ -116,7 +116,7 @@ def run_all_benchmarks():
             # Use enumerate to get case number within category
             for i, test_case in enumerate(test_cases_in_category):
                 case_num_in_cat = i + 1
-                overall_total_cases += 1
+                current_overall_case_num += 1 # Increment the correct overall counter here
                 cat_stats['case_count'] += 1
                 input_repr = repr(test_case[:15]) + ('...' if len(test_case) > 15 else '')
                 # Send progress update for case start
@@ -128,11 +128,11 @@ def run_all_benchmarks():
                     'category_case_num': case_num_in_cat,
                     'category_total_cases': num_cases_in_cat,
                     'current_case': current_overall_case_num, # Use the incremented overall counter
-                    'total_cases': total_overall_cases, # Add overall total
+                    'total_cases': total_overall_cases, # Use the pre-calculated total
                     'input_snippet': input_repr,
                     'message': f"Running Case {current_overall_case_num}/{total_overall_cases} (Category: {category} {case_num_in_cat}/{num_cases_in_cat})..."
                 })
-                # print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {overall_total_cases}): Input={input_repr}", file=sys.stderr, end='') # Keep simple stderr log too
+                # print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {current_overall_case_num}): Input={input_repr}", file=sys.stderr, end='') # Keep simple stderr log too (updated counter)
                 llm_time_sec = None
                 baseline_time_sec = None
                 is_correct = False
