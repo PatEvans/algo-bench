@@ -32,7 +32,6 @@
                     <th>Benchmark Type</th> <!-- Changed Header -->
                     <th>Correctness (%)</th>
                     <th>LLM Avg. Time (ms) (Overall)</th>
-                    <th>Baseline Avg. Time (ms) (Overall)</th>
                     <th>Performance Details (Category: Correctness%, LLM ms, Baseline ms, Count)</th>
                     <th>Error</th>
                     <!-- Optional: Add column for viewing code -->
@@ -46,7 +45,6 @@
                         <td>{{ result.algorithm }}</td>
                         <td>{{ '%.2f'|format(result.correctness) if result.correctness is not none else 'N/A' }}</td>
                         <td>{{ '%.4f'|format(result.avg_time_ms) if result.avg_time_ms is not none else 'N/A' }}</td>
-                        <td>{{ '%.4f'|format(result.baseline_avg_time_ms) if result.baseline_avg_time_ms is not none else 'N/A' }}</td>
                         <td>
                             {% if result.performance_details %}
                                 <ul style="margin: 0; padding-left: 15px; font-size: 0.9em;">
