@@ -439,7 +439,7 @@ if __name__ == "__main__":
                         volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'rw'}}, # Mount RW for output/error files
                         working_dir=sandbox_dir,
                         stdout=False, # Don't capture stdout directly, use files
-                        stderr=False, # Don't capture stderr directly, use files
+                        stderr=True, # CAPTURE stderr directly
                         mem_limit=CONTAINER_MEM_LIMIT,
                         cpu_shares=CONTAINER_CPU_SHARES,
                         detach=True, # Run detached to manage timeout manually
@@ -540,10 +540,12 @@ if __name__ == "__main__":
 
                             except json.JSONDecodeError as json_e:
                                 llm_error_str = f"Failed to decode JSON from output file: {json_e}. Raw content: '{stdout_output[:200]}...'"
-                                if container_error_log: llm_error_str += f"\nError log:\n---\n{container_error_log}\n---"
+                                if container_error_log_content: llm_error_str += f"\nError log file content:\n---\n{container_error_log_content}\n---"
+                                if container_stderr_logs: llm_error_str += f"\nContainer stderr:\n---\n{container_stderr_logs}\n---"
                             except Exception as parse_e:
                                  llm_error_str = f"Error reading or parsing output file: {parse_e}"
-                                 if container_error_log: llm_error_str += f"\nError log:\n---\n{container_error_log}\n---"
+                                 if container_error_log_content: llm_error_str += f"\nError log file content:\n---\n{container_error_log_content}\n---"
+                                 if container_stderr_logs: llm_error_str += f"\nContainer stderr:\n---\n{container_stderr_logs}\n---"
 
                 # Catch errors during the setup/execution phase *outside* the container run itself
                 except (APIError, DockerConnectionError) as docker_setup_err:
