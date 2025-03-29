@@ -4,6 +4,12 @@ Module to interact with various Large Language Models (LLMs).
 Requires API keys and necessary libraries (e.g., openai, anthropic).
 Store API keys securely (e.g., environment variables), do not hardcode them.
 """
+import os
+import re
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None # Handle case where library is not installed
 
 def generate_code(llm_name: str, prompt: str) -> str | None:
     """
@@ -42,6 +48,58 @@ def sort_algorithm(arr):
             break
     return new_arr
 """
+    elif llm_name == "Gemini 1.5 Pro":
+        if genai is None:
+            print("Error: google.generativeai library not installed. Run 'pip install google-generativeai'")
+            return None
+        try:
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                print("Error: GOOGLE_API_KEY environment variable not set.")
+                return None
+
+            genai.configure(api_key=api_key)
+            # Using gemini-1.5-pro-latest, adjust if needed
+            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+
+            # Optional: Add safety settings if desired
+            # safety_settings = [
+            #     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            #     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            #     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            #     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            # ]
+            # response = model.generate_content(prompt, safety_settings=safety_settings)
+
+            response = model.generate_content(prompt)
+
+            # Basic check for response content
+            if not response.parts:
+                 print(f"Error: Gemini API returned no parts in the response. Response: {response}")
+                 return None
+
+            # Extract text content - handle potential lack of text
+            generated_text = ""
+            try:
+                 generated_text = response.text
+            except ValueError:
+                 # Handle cases where response.text might raise ValueError (e.g., blocked content)
+                 print(f"Error: Could not extract text from Gemini response. It might be blocked. Full response: {response}")
+                 return None # Or handle based on response.prompt_feedback
+
+            # Extract Python code block (handles ```python ... ``` or just ```...```)
+            # Regex to find code blocks fenced by triple backticks, optionally with 'python' tag
+            code_match = re.search(r"```(?:python\n)?(.*?)```", generated_text, re.DOTALL | re.IGNORECASE)
+            if code_match:
+                return code_match.group(1).strip()
+            else:
+                # If no fenced block, assume the whole response might be code (less reliable)
+                print("Warning: Could not find Python code block in ``` markers. Returning entire response.")
+                return generated_text.strip()
+
+        except Exception as e:
+            print(f"Error calling Gemini API: {e}")
+            return None
     # Add placeholders for other LLMs here if needed
     # elif llm_name == "gpt-4":
     #     # Call OpenAI API
