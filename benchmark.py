@@ -479,37 +479,65 @@ if __name__ == "__main__":
                          current_llm_time = llm_end_time - llm_start_time
 
 
-                    # 3. Process results by reading files from host temp dir
-                    container_error_log = ""
+                    # 3. Process results: Get logs first, then check files
+                    container_stderr_logs = ""
+                    try:
+                        # Retrieve logs regardless of exit code, might contain warnings/prints
+                        container_stderr_logs = container.logs(stdout=False, stderr=True).decode('utf-8', errors='replace').strip()
+                    except APIError as log_err:
+                        print(f"    Warning: Failed to retrieve container stderr logs: {log_err}")
+                        # Optionally add this warning to llm_error_str later?
+                    except Exception as log_generic_err:
+                         print(f"    Warning: Unexpected error retrieving container stderr logs: {log_generic_err}")
+
+
+                    container_error_log_content = "" # Content from the error file
+                    error_log_read_error = None
                     if os.path.exists(error_path_host):
                         try:
                             with open(error_path_host, 'r', encoding='utf-8') as f_err:
-                                container_error_log = f_err.read().strip()
+                                container_error_log_content = f_err.read().strip()
                         except Exception as read_err:
-                            print(f"    Warning: Failed to read error log file {error_path_host}: {read_err}")
-                            container_error_log = "(Failed to read error log)"
+                            error_log_read_error = f"(Host failed to read error log: {read_err})"
+                            print(f"    Warning: {error_log_read_error}")
 
 
-                    # Prioritize errors: Docker-level > Timeout > Non-zero exit > Error log content
-                    if llm_error_str: # Docker error or timeout takes precedence
-                        pass # llm_error_str already set
+                    # Consolidate error reporting
+                    if llm_error_str: # Docker API error or timeout takes precedence
+                        # Append stderr logs if they exist and might provide more context
+                        if container_stderr_logs:
+                             llm_error_str += f"\nContainer stderr:\n---\n{container_stderr_logs}\n---"
                     elif exit_code != 0:
                         llm_error_str = f"Container exited with code {exit_code}."
-                        if container_error_log:
-                            llm_error_str += f" Error log:\n---\n{container_error_log}\n---"
-                        else:
-                            llm_error_str += " (No error log found or log was empty)"
-                    elif container_error_log: # Exit code 0, but error log has content (e.g., stray prints)
-                         print(f"    Warning: Container exited code 0 but produced error log:\n---\n{container_error_log}\n---")
-                         # Decide if this should be treated as an error or just a warning
-                         # For now, let's proceed to check output if exit code was 0
+                        # Append error log content if found
+                        if container_error_log_content:
+                            llm_error_str += f" Error log file content:\n---\n{container_error_log_content}\n---"
+                        # Append stderr logs if found (might contain the actual error if file write failed)
+                        if container_stderr_logs:
+                            llm_error_str += f"\nContainer stderr:\n---\n{container_stderr_logs}\n---"
+                        # If both file and stderr are empty, add a specific message
+                        if not container_error_log_content and not container_stderr_logs:
+                             llm_error_str += " (No error log file content found and container stderr was empty)"
+                        # Report if reading the error log file itself failed
+                        if error_log_read_error:
+                             llm_error_str += f"\n{error_log_read_error}"
 
-                    # If no critical error reported so far, try to read and validate output
+                    elif container_error_log_content: # Exit code 0, but error log has content
+                         # Treat this as a potential issue (e.g., stray prints written to error file)
+                         print(f"    Warning: Container exited code 0 but error log file has content:\n---\n{container_error_log_content}\n---")
+                         # Optionally, capture this warning in the results? For now, just print.
+                    elif container_stderr_logs: # Exit code 0, no error log file, but stderr has content
+                         # Also potentially stray prints/warnings
+                         print(f"    Warning: Container exited code 0, no error log file, but stderr has content:\n---\n{container_stderr_logs}\n---")
+
+
+                    # If no critical error reported so far (llm_error_str is still None), try to read output
                     if llm_error_str is None:
                         if not os.path.exists(output_path_host):
                             llm_error_str = "Container finished successfully but output file was not created."
-                            if container_error_log: # Add context if available
-                                 llm_error_str += f" Error log content:\n---\n{container_error_log}\n---"
+                            # Add context if available
+                            if container_error_log_content: llm_error_str += f"\nError log file content:\n---\n{container_error_log_content}\n---"
+                            if container_stderr_logs: llm_error_str += f"\nContainer stderr:\n---\n{container_stderr_logs}\n---"
                         else:
                             try:
                                 with open(output_path_host, 'r', encoding='utf-8') as f_out:
