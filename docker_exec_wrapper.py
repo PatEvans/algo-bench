@@ -249,15 +249,17 @@ if __name__ == "__main__":
     # --- Print the final aggregated results as JSON to stdout ---
     # Add a type field to distinguish the final result message
     final_message = {"type": "result", "data": final_results}
-    print("DEBUG WRAPPER: Preparing to print final JSON to stdout.", file=sys.stderr, flush=True) # DEBUG ADDED
+    print("DEBUG WRAPPER: Preparing to print final JSON to stdout.", file=sys.stderr, flush=True)
+    print("---WRAPPER_STDOUT_MARKER_BEFORE---", flush=True) # MARKER ADDED to stdout
     try:
         final_json_string = json.dumps(final_message) # Serialize once
-        print(f"DEBUG WRAPPER: Final JSON string length: {len(final_json_string)}", file=sys.stderr, flush=True) # DEBUG ADDED
-        print(f"DEBUG WRAPPER: Final JSON to print (first 500 chars): {final_json_string[:500]}", file=sys.stderr, flush=True) # DEBUG ADDED
+        print(f"DEBUG WRAPPER: Final JSON string length: {len(final_json_string)}", file=sys.stderr, flush=True)
+        print(f"DEBUG WRAPPER: Final JSON to print (first 500 chars): {final_json_string[:500]}", file=sys.stderr, flush=True)
         print(final_json_string, flush=True) # Print final result to stdout and flush
-        print("DEBUG WRAPPER: Successfully printed final JSON to stdout.", file=sys.stderr, flush=True) # DEBUG ADDED
+        print("---WRAPPER_STDOUT_MARKER_AFTER---", flush=True) # MARKER ADDED to stdout
+        print("DEBUG WRAPPER: Successfully printed final JSON to stdout.", file=sys.stderr, flush=True)
     except TypeError as json_err:
-        print("DEBUG WRAPPER: Caught TypeError during final JSON serialization/print.", file=sys.stderr, flush=True) # DEBUG ADDED
+        print("DEBUG WRAPPER: Caught TypeError during final JSON serialization/print.", file=sys.stderr, flush=True)
         # Fallback if results contain non-serializable data
         fallback_error = f"FATAL: Could not serialize final results dictionary: {json_err}. Original error: {final_results.get('error')}"
         final_message = {"type": "result", "data": {'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}

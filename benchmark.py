@@ -336,22 +336,34 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                print(f"Streaming output from container exec_id: {exec_id}...")
                # Iterate safely, checking for None from the generator
                # Note: exec_start returns a generator directly
+               print(f"DEBUG BENCHMARK: Starting stream read loop for exec_id: {exec_id}") # DEBUG ADDED
                for item in exec_stream_generator:
                    if item is None:
                        # This condition might still be relevant depending on Docker API behavior
-                       print(f"WARNING: Received None from exec_start stream generator (exec_id: {exec_id}). Assuming stream ended.")
+                       print(f"DEBUG BENCHMARK: Received None from exec_start stream generator (exec_id: {exec_id}). Assuming stream ended.") # DEBUG ADDED
                        break # Exit the loop if None is received
 
                    # Now we know item is not None, proceed with unpacking
                    stream_type, chunk = item
 
+                   # Log the raw chunk received BEFORE checking type or content
+                   try:
+                       chunk_repr = repr(chunk) # Use repr to handle potential binary data safely
+                       print(f"DEBUG BENCHMARK: Received chunk - Type: {stream_type}, Size: {len(chunk) if chunk else 0}, Content (repr): {chunk_repr[:200]}{'...' if chunk and len(chunk) > 200 else ''}") # DEBUG ADDED
+                   except Exception as log_err:
+                       print(f"DEBUG BENCHMARK: Error logging received chunk: {log_err}") # DEBUG ADDED
+
+
                    # Still check if the chunk itself is None/empty, although less likely now
                    if chunk is None:
+                       print("DEBUG BENCHMARK: Chunk is None, skipping.") # DEBUG ADDED
                        continue
 
                    if stream_type == 1: # stdout (final result)
+                       print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stdout_acc.") # DEBUG ADDED
                        stdout_acc += chunk
                    elif stream_type == 2: # stderr (progress updates)
+                       print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stderr_buffer.") # DEBUG ADDED
                        stderr_buffer += chunk
                        # Process complete lines from stderr buffer
                        lines = stderr_buffer.split(b'\n')
@@ -374,19 +386,28 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                                print(f"ERROR: Progress callback failed: {cb_err}")
 
                # --- Stream finished, now inspect exit code using the saved exec_id ---
+               print(f"DEBUG BENCHMARK: Stream finished for exec_id: {exec_id}. Inspecting exit code...") # DEBUG ADDED
                exec_inspect = docker_client.api.exec_inspect(exec_id) # Use the saved exec_id
                exit_code = exec_inspect.get('ExitCode')
+               print(f"DEBUG BENCHMARK: exec_inspect result: {exec_inspect}") # DEBUG ADDED
+               print(f"DEBUG BENCHMARK: Determined Exit Code: {exit_code}") # DEBUG ADDED
 
                # Handle potential None exit code
                if exit_code is None:
-                   print(f"WARNING: exec_inspect returned ExitCode=None immediately after stream finished. Inspect: {exec_inspect}")
+                   print(f"WARNING/DEBUG: exec_inspect returned ExitCode=None immediately after stream finished. Inspect: {exec_inspect}") # DEBUG ADDED
                    # Optionally add a small delay and retry inspect here if needed
 
                # Process final stdout result
+               print(f"DEBUG BENCHMARK: Final accumulated stdout size: {len(stdout_acc)} bytes.") # DEBUG ADDED
+               stdout_content_for_debug = stdout_acc.decode('utf-8', errors='replace') # Decode for logging
+               print(f"DEBUG BENCHMARK: Final accumulated stdout content (first 1000 chars):\n---\n{stdout_content_for_debug[:1000]}\n---") # DEBUG ADDED
+
                if exit_code == 0:
+                   print("DEBUG BENCHMARK: Exit code is 0. Processing stdout...") # DEBUG ADDED
                    try:
                        output_str = stdout_acc.decode('utf-8').strip()
                        if not output_str:
+                            print("DEBUG BENCHMARK: stdout_acc decoded to an empty string.") # DEBUG ADDED
                             raise ValueError("Container stdout was empty (Exit Code 0).")
                        # Expecting JSON like {"type": "result", "data": {...}}
                        final_message = json.loads(output_str)
