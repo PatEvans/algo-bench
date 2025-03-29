@@ -336,23 +336,27 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        parsed_result = None
 
                        try:
-                           # Write input JSON to stdin stream
-                           # Need to encode the string to bytes
+                           # Write input JSON to stdin stream using sendall
                            input_bytes = input_json.encode('utf-8')
-                           # Wrap socket for writing bytes
-                           stdin_stream = _sock_low_level.makefile('wb')
-                           stdin_stream.write(input_bytes)
+                           _sock_low_level.sendall(input_bytes)
                            # IMPORTANT: Close the write half to signal EOF to the container's stdin.read()
                            _sock_low_level.shutdown(socket.SHUT_WR)
-                           stdin_stream.close() # Close the file wrapper
 
-                           # Read all output from stdout stream until closed
-                           # Wrap socket for reading bytes
-                           stdout_stream = _sock_low_level.makefile('rb')
-                           output_bytes = stdout_stream.read()
-                           stdout_stream.close() # Close the file wrapper
+                           # Read all output from stdout stream using recv in a loop
+                           output_chunks = []
+                           while True:
+                               # Read chunks of data (e.g., 4096 bytes)
+                               chunk = _sock_low_level.recv(4096)
+                               if not chunk:
+                                   # Empty chunk means the container closed the connection
+                                   break
+                               output_chunks.append(chunk)
+                           output_bytes = b"".join(output_chunks)
 
+                       except socket.timeout:
+                           llm_error_str = f"Socket operation timed out after {SOCKET_TIMEOUT} seconds (LLM code likely too slow or hung)."
                        except (socket.error, BrokenPipeError, OSError) as sock_err:
+                           # BrokenPipeError might still occur here if container crashes early
                            llm_error_str = f"Socket error during exec: {sock_err}"
                        except Exception as stream_err:
                            llm_error_str = f"Error during socket stream I/O: {stream_err}"
