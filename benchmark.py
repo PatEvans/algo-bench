@@ -3,175 +3,93 @@ Module for benchmarking LLM-generated sorting algorithms.
 
 Handles:
 - Generating prompts for LLMs.
-- Safely executing the generated code.
+- Safely executing the generated code within Docker.
 - Evaluating correctness and performance.
 """
 
 import time
-import random
-import llm_interface
 import json
+import tempfile # For creating temporary files AND directories
+import os # For file path operations
+import random # Moved import to top level
 from collections import defaultdict
-import time # Re-importing for clarity, used within functions
-import random # Re-importing for clarity, used within functions
-import llm_interface # Re-importing for clarity, used within functions
-from typing import Callable, Optional, Any # For type hinting the callback
+from typing import Callable, Optional # For type hinting the callback (Removed Any)
+import docker # For Docker interaction
+from docker.errors import APIError, ImageNotFound # Specific Docker errors (Removed ContainerError)
+from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
+from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
+import tarfile # To create tar archives for copying into container
+import io # To handle in-memory tar archive
+# Socket import no longer needed here as we don't interact with exec stream directly
+# import socket
 
-# Need a secure way to execute code, e.g., using restricted environments or sandboxing.
-# This is a critical security consideration. A simple `exec` is DANGEROUS.
+# Import functions from the new test suite generator module
+import test_suite_generator
 
-# Constant for the generic algorithm name
-GENERAL_ALGORITHM_NAME = "LLM General Sort"
+# Using Docker containers provides better isolation than subprocess.
+# Moved import random to top level
 
-def create_sort_prompt() -> str:
-    """Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm."""
-    return f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
+# Constant for the label used for all benchmarks run via evaluate_algorithm
+BENCHMARKED_ALGORITHM_LABEL = "LLM/Baseline Sort [Docker]"
+# Constant for the filename of the docker wrapper script
+DOCKER_WRAPPER_SCRIPT_NAME = "docker_exec_wrapper.py"
+# Constant for the filename of the test suite data inside the container
+TEST_SUITE_DATA_FILENAME = "test_suite_data.json"
 
-# Renamed: Generates cases for the suite
-def _generate_test_cases_for_suite(size_small=10, size_medium=10000, size_large=1000000, num_cases_per_type=2) -> dict[str, list[list[int]]]:
+
+def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[list[int], list[int]]]:
+    """Generates small input/output examples for the LLM prompt."""
+    examples = []
+    # Ensure basic cases are covered
+    if num_examples >= 1:
+        examples.append(([], [])) # Empty list
+    if num_examples >= 2:
+        examples.append(([5], [5])) # Single element
+    if num_examples >= 3:
+        examples.append(([3, 1, 4, 1, 5, 9], [1, 1, 3, 4, 5, 9])) # Basic unsorted with duplicate
+
+    # Add more random examples if needed
+    current_examples = len(examples)
+    for _ in range(max(0, num_examples - current_examples)):
+        size = random.randint(2, max_size)
+        input_list = [random.randint(min_val, max_val) for _ in range(size)]
+        output_list = sorted(input_list)
+        examples.append((input_list, output_list))
+
+    return examples[:num_examples] # Return exactly num_examples
+
+def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = None) -> str:
     """
-    Generates integer test cases based on specified patterns for saving to a suite file.
-    - Randomized (within a range)
-    - Duplicates (many repeating elements)
-    - Sorted (ascending)
-    - Reversed (descending)
-    - Nearly Sorted (a few elements swapped)
-
-    Args:
-        size_small: Size for small test cases.
-        size_medium: Size for medium test cases.
-        size_large: Size for large test cases.
-        num_cases_per_type: Number of random/duplicate/nearly sorted cases per size.
-
-    Returns:
-        A dictionary where keys are category names (e.g., "random_small", "sorted_large")
-        and values are lists containing the test case lists for that category.
+    Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm,
+    optionally including examples.
     """
-    cases_by_category = defaultdict(list)
-    cases_by_category['special_empty'] = [[]]
-    cases_by_category['special_single'] = [[5]]
+    base_prompt = (
+        "Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm "
+        "suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.).\n"
+        "The function MUST take a list of numbers as input and return a new sorted list.\n"
+        "IMPORTANT: The function MUST NOT use the built-in sorted() function or the .sort() method.\n"
+        "IMPORTANT: The function MUST NOT print anything to standard output. It should ONLY return the sorted list."
+    )
 
-    sizes = {'small': size_small, 'medium': size_medium, 'large': size_large}
-    min_val, max_val = -10000, 10000
+    if examples:
+        example_str = "\n\nHere are some examples of how the function should behave:\n"
+        for input_list, output_list in examples:
+            example_str += f"Input: {input_list}\nOutput: {output_list}\n\n"
+        return base_prompt + example_str.strip() # Add examples and remove trailing newline
+    else:
+        return base_prompt
 
-    total_cases = 2 # Start with empty and single
+# Test suite generation/loading functions are now in test_suite_generator.py
 
-    for name, size in sizes.items():
-        if size == 0: continue
+# --- Evaluation Logic ---
 
-        print(f"Generating cases for size: {name} ({size})...")
-
-        # 1. Randomized
-        cat_random = f"random_{name}"
-        for i in range(num_cases_per_type):
-            random_case = [random.randint(min_val, max_val) for _ in range(size)]
-            cases_by_category[cat_random].append(random_case)
-            print(f"  - Added {cat_random} case {i+1}")
-            total_cases += 1
-
-        # 2. With Duplicates
-        cat_duplicates = f"duplicates_{name}"
-        duplicate_range_max = max(1, size // 10)
-        for i in range(num_cases_per_type):
-            duplicate_case = [random.randint(0, duplicate_range_max) for _ in range(size)]
-            cases_by_category[cat_duplicates].append(duplicate_case)
-            print(f"  - Added {cat_duplicates} case {i+1}")
-            total_cases += 1
-
-        # 3. Sorted (Ascending)
-        cat_sorted = f"sorted_{name}"
-        sorted_case = list(range(size))
-        cases_by_category[cat_sorted].append(sorted_case)
-        print(f"  - Added {cat_sorted} case")
-        total_cases += 1
-
-        # 4. Reversed (Descending)
-        cat_reversed = f"reversed_{name}"
-        reversed_case = list(range(size, 0, -1))
-        cases_by_category[cat_reversed].append(reversed_case)
-        print(f"  - Added {cat_reversed} case")
-        total_cases += 1
-
-        # 5. Nearly Sorted (e.g., swap a few pairs) - Optional but good
-        cat_nearly_sorted = f"nearly_sorted_{name}"
-        num_swaps = max(1, size // 20) # Swap ~5% of elements
-        for i in range(num_cases_per_type):
-            nearly_sorted_case = list(range(size))
-            for _ in range(num_swaps):
-                idx1, idx2 = random.sample(range(size), 2)
-                nearly_sorted_case[idx1], nearly_sorted_case[idx2] = nearly_sorted_case[idx2], nearly_sorted_case[idx1]
-            cases_by_category[cat_nearly_sorted].append(nearly_sorted_case)
-            print(f"  - Added {cat_nearly_sorted} case {i+1}")
-            total_cases += 1
-
-
-    # Example of adding a very large case (use with caution!)
-    # size_xl = 10_000_000
-    # cat_xl = "random_xl"
-    # print(f"Generating XL random case ({size_xl})...")
-    # cases_by_category[cat_xl].append([random.randint(min_val, max_val) for _ in range(size_xl)])
-    # total_cases += 1
-
-    print(f"Generated a total of {total_cases} test cases across {len(cases_by_category)} categories for the suite.")
-    return dict(cases_by_category) # Convert back to regular dict
-
-
-def generate_and_save_test_suite(filename: str, **kwargs):
-    """
-    Generates a suite of test cases using specified parameters and saves it to a JSON file.
-
-    Args:
-        filename: The path to the JSON file to save the test suite.
-        **kwargs: Arguments to pass to _generate_test_cases_for_suite (e.g., size_small, num_cases_per_type).
-                  Uses defaults from _generate_test_cases_for_suite if not provided.
-    """
-    print(f"Generating test suite with parameters: {kwargs}...")
-    test_suite = _generate_test_cases_for_suite(**kwargs)
-    print(f"Saving test suite to {filename}...")
-    try:
-        with open(filename, 'w') as f:
-            json.dump(test_suite, f, indent=2) # Use indent for readability
-        print("Test suite saved successfully.")
-    except IOError as e:
-        print(f"Error saving test suite to {filename}: {e}")
-    except TypeError as e:
-        print(f"Error serializing test suite (maybe non-serializable data?): {e}")
-
-
-def load_test_suite(filename: str) -> dict[str, list[list[int]]]:
-    """Loads a precomputed test suite from a JSON file."""
-    print(f"Loading test suite from {filename}...")
-    try:
-        with open(filename, 'r') as f:
-            test_suite = json.load(f)
-        print("Test suite loaded successfully.")
-        return test_suite
-    except FileNotFoundError:
-        print(f"Error: Test suite file not found at {filename}.")
-        raise # Re-raise the exception to be handled by the caller
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON from {filename}: {e}")
-        raise
-    except Exception as e:
-        print(f"An unexpected error occurred while loading {filename}: {e}")
-        raise
-
-
-# Modified: Accepts pre-loaded test cases
 def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
     """
-    Evaluates the generated sorting algorithm code against a pre-loaded test suite, optionally reporting progress.
+    Evaluates the generated sorting algorithm code using provided test cases, optionally reporting progress.
 
     Args:
         generated_code: The Python code string generated by the LLM.
-        categorized_test_cases: The dictionary of pre-loaded test cases.
-        progress_callback: An optional function to call with progress updates.
-                           The dictionary passed to the callback might contain keys like:
-                           'current_case', 'total_cases', 'category', 'status',
-                           'input_snippet', 'output_snippet', 'error'.
-
-    Args:
-        generated_code: The Python code string generated by the LLM.
+        categorized_test_cases: A dictionary containing the test cases, keyed by category.
         progress_callback: An optional function to call with progress updates.
                            The dictionary passed to the callback might contain keys like:
                            'current_case', 'total_cases', 'category', 'status',
@@ -192,194 +110,422 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         'performance_details': {}, # To store per-category results
         'error': None
     }
-    # Test cases are now passed as an argument, no generation/loading here.
+
     if not categorized_test_cases:
-         results['error'] = "Received empty or invalid test suite."
-         return results
+        results['error'] = "No test cases provided for evaluation."
+        return results
 
-    # Aggregators for overall results
-    overall_correct_count = 0
-    overall_llm_time = 0
-    overall_baseline_time = 0
-    overall_total_cases = 0
-    overall_llm_runs_timed = 0 # Count only successful, correct LLM runs for averaging
+    # Aggregation is now done inside the container. Initialize results structure.
+    results = {
+        'correctness': 0.0,
+        'avg_time_ms': None,
+        'baseline_avg_time_ms': None,
+        'performance_details': {},
+        'error': None
+    }
+    # Calculate total cases for initial progress reporting
+    total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
 
-    # Aggregators for per-category results
-    category_results = defaultdict(lambda: {'correct_count': 0, 'llm_time': 0, 'baseline_time': 0, 'case_count': 0, 'llm_runs_timed': 0})
+    # Define the Docker image to use
+    DOCKER_IMAGE = "python:3.10-slim" # Or choose another appropriate Python image
+    # Define container resource limits (adjust as needed)
+    # EXEC_TIMEOUT is now handled by the wrapper script's logic or potentially docker exec timeout param
+    EXEC_TIMEOUT_SECONDS = 300 # Timeout for the *entire* exec call (adjust as needed)
+    CONTAINER_MEM_LIMIT = "1g" # Increased memory limit to 1 GB to handle large test cases
+    CONTAINER_CPU_SHARES = 512 # Relative CPU weight (default 1024)
 
+    # Initialize Docker client
+    docker_client = None
     try:
-        # !!! SECURITY WARNING !!!
-        # Executing arbitrary code from LLMs is highly risky.
-        # `exec` is used here for simplicity but is NOT SAFE for production.
-        # A proper sandboxing mechanism (e.g., Docker containers, restricted Python interpreters)
-        # is essential to prevent malicious code execution.
-        local_namespace = {}
-        exec(generated_code, {}, local_namespace)
+        # Signal start of evaluation process
+        if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Initializing', 'message': 'Initializing evaluation environment...'})
 
-        if 'sort_algorithm' not in local_namespace or not callable(local_namespace['sort_algorithm']):
-            results['error'] = "Generated code does not contain a callable function named 'sort_algorithm'."
-            return results
+        # Increase timeout for initial connection to Docker daemon
+        docker_client = docker.from_env(timeout=120) # Increased initial connection timeout to 120s
+        docker_client.ping() # Verify connection after increasing timeout
+        print("Successfully connected to Docker daemon.")
+        if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Connecting Docker', 'message': 'Docker client connected.'})
 
-        sort_func = local_namespace['sort_algorithm']
+        # Increase the default timeout for API calls (including streaming reads)
+        # Default is often 60s, but read timeouts might be shorter or hit socket defaults.
+        # Let's set it explicitly higher for potentially long benchmark runs.
+        docker_client.api.timeout = 600 # Set timeout to 600 seconds (10 minutes)
+        print(f"Docker client API timeout set to {docker_client.api.timeout} seconds.")
 
-        # Calculate total cases for progress reporting
-        total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
-        current_overall_case_num = 0
+        # Ensure image exists
+        try:
+            docker_client.images.get(DOCKER_IMAGE)
+            print(f"Docker image {DOCKER_IMAGE} found locally.")
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Checking Image', 'message': f'Docker image ready ({DOCKER_IMAGE}).'})
+        except ImageNotFound:
+            print(f"Pulling Docker image: {DOCKER_IMAGE}...")
+            # Keep this message as pulling can take time
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Pulling Image', 'message': f'Pulling Docker image {DOCKER_IMAGE}...'})
+            docker_client.images.pull(DOCKER_IMAGE)
+            print(f"Docker image {DOCKER_IMAGE} pulled.")
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Image Pulled', 'message': f'Docker image pulled ({DOCKER_IMAGE}).'})
+        print(f"Using Docker image: {DOCKER_IMAGE}")
+    except (DockerConnectionError, APIError, Exception) as e:
+        results['error'] = f"Docker initialization failed: {e}. Is Docker running?"
+        print(f"Error: {results['error']}")
+        if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+        return results
 
-        # Iterate through each category and its test cases
-        for category, test_cases_in_category in categorized_test_cases.items():
-            print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
-            cat_stats = category_results[category] # Get stats dict for this category
-            num_cases_in_category = len(test_cases_in_category)
+    # Construct the absolute path to the Docker wrapper script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    wrapper_script_path = os.path.join(script_dir, DOCKER_WRAPPER_SCRIPT_NAME)
 
-            for i, test_case in enumerate(test_cases_in_category):
-                current_overall_case_num += 1
-                cat_stats['case_count'] += 1 # Increment here to match overall count logic
-
-                # --- Prepare data for callback ---
-                progress_data = {
-                    'current_case': current_overall_case_num,
-                    'total_cases': total_overall_cases_calculated,
-                    'category': category,
-                    'category_case_num': i + 1,
-                    'category_total_cases': num_cases_in_category,
-                    'status': 'Running',
-                    'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                    'output_snippet': None,
-                    'error': None
-                }
-                if progress_callback:
-                    progress_callback(progress_data) # Report start of case processing
-
-                # Prepare inputs for both sorts
-                llm_input = list(test_case)
-                baseline_input = list(test_case)
-                expected_output = sorted(test_case) # Ground truth
-
-                # --- Time LLM's sort_algorithm ---
-                llm_start_time = time.perf_counter()
-                actual_output = None
-                llm_error = None
-                current_llm_time = None
-                is_correct = False
-
-                try:
-                    actual_output = sort_func(llm_input)
-                    llm_end_time = time.perf_counter()
-                    current_llm_time = llm_end_time - llm_start_time
-
-                    if actual_output == expected_output:
-                        is_correct = True
-                        overall_correct_count += 1
-                        cat_stats['correct_count'] += 1
-                        # Only add time for correct runs to avoid skewing averages
-                        overall_llm_time += current_llm_time
-                        cat_stats['llm_time'] += current_llm_time
-                        overall_llm_runs_timed += 1
-                        cat_stats['llm_runs_timed'] += 1
-                    else:
-                        # Log incorrect sort
-                        actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
-                        expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
-                        test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                        print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
-                        progress_data['status'] = 'Incorrect'
-                        progress_data['output_snippet'] = actual_repr
-                    # Update progress after LLM run (if no exception)
-                    if progress_callback:
-                        progress_callback(progress_data)
-
-                except Exception as e:
-                    llm_error = e
-                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                    print(f"    Error during LLM sort execution: Input={test_repr}, Error={e}")
-                    # Do not count time if it errored
-                    # Report error via callback
-                    if progress_callback:
-                        progress_data['status'] = 'Error'
-                        progress_data['error'] = str(e)
-                        progress_callback(progress_data)
-
-                # --- Time Python's built-in sorted() ---
-                baseline_start_time = time.perf_counter()
-                current_baseline_time = None
-                try:
-                    _ = sorted(baseline_input) # Execute baseline sort
-                    baseline_end_time = time.perf_counter()
-                    current_baseline_time = baseline_end_time - baseline_start_time
-                    overall_baseline_time += current_baseline_time
-                    cat_stats['baseline_time'] += current_baseline_time
-                except Exception as e:
-                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                    print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
-                    # Decide how to handle baseline errors (e.g., skip timing for this case?)
-
-        # --- Calculate Final Results ---
-
-        # Overall results
-        if overall_total_cases > 0:
-            results['correctness'] = (overall_correct_count / overall_total_cases) * 100
-            results['baseline_avg_time_ms'] = (overall_baseline_time / overall_total_cases) * 1000
-        if overall_llm_runs_timed > 0: # Average LLM time only over correctly sorted cases
-            results['avg_time_ms'] = (overall_llm_time / overall_llm_runs_timed) * 1000
-
-        # Per-category results
-        for category, stats in category_results.items():
-            cat_correctness = (stats['correct_count'] / stats['case_count']) * 100 if stats['case_count'] > 0 else 0.0
-            cat_avg_llm_time = (stats['llm_time'] / stats['llm_runs_timed']) * 1000 if stats['llm_runs_timed'] > 0 else None
-            cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
-            results['performance_details'][category] = {
-                'correctness': cat_correctness,
-                'avg_time_ms': cat_avg_llm_time,
-                'baseline_avg_time_ms': cat_avg_baseline_time,
-                'count': stats['case_count']
-            }
-
-    except SyntaxError as e:
-        results['error'] = f"Syntax error in generated code: {e}"
-        # Ensure performance_details is still present, even if empty
-        results['performance_details'] = results.get('performance_details', {})
+    # Read the Docker execution wrapper script content
+    try:
+        print(f"Attempting to read wrapper script from: {wrapper_script_path}") # Debug print
+        with open(wrapper_script_path, 'r', encoding='utf-8') as f:
+            exec_wrapper_code = f.read()
+        print(f"Successfully read wrapper script: {DOCKER_WRAPPER_SCRIPT_NAME}") # Debug print
+    except FileNotFoundError:
+        results['error'] = f"Critical Error: Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' not found at expected path: {wrapper_script_path}."
+        print(results['error'])
+        if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+        return results
     except Exception as e:
-        results['error'] = f"Error executing generated code: {e}"
+        results['error'] = f"Critical Error: Failed to read Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' from path '{wrapper_script_path}': {e}"
+        print(results['error'])
+        if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+        return results
+
+
+    container = None
+    # Use ExitStack for robust cleanup of tempdir and container
+    with ExitStack() as stack:
+        try:
+           # Create TemporaryDirectory for the LLM code and runner script
+           temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
+           llm_code_filename = "llm_sort.py"
+           # Use the constant for the wrapper script filename on the host
+           runner_script_filename_host = DOCKER_WRAPPER_SCRIPT_NAME
+           llm_code_path_host = os.path.join(temp_dir, llm_code_filename)
+           # The runner script is read from its fixed location, but we'll write its content
+           # to the temp dir for copying into the container, using a consistent name inside.
+           runner_script_filename_cont = "exec_runner.py" # Name inside container
+           runner_script_path_host = os.path.join(temp_dir, runner_script_filename_cont) # Path on host temp dir
+           # Define path for the test suite data file on the host
+           test_suite_data_path_host = os.path.join(temp_dir, TEST_SUITE_DATA_FILENAME)
+
+           sandbox_dir = "/sandbox" # Mount point inside container
+           llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
+           runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename_cont}" # Container path for runner
+           test_suite_data_path_cont = f"{sandbox_dir}/{TEST_SUITE_DATA_FILENAME}" # Container path for test data
+
+           # --- DEBUG: Verify host files before container start ---
+           print(f"DEBUG: Host temporary directory: {temp_dir}")
+           print(f"DEBUG: Host LLM code path: {llm_code_path_host}")
+           print(f"DEBUG: Host runner script path (in temp): {runner_script_path_host}")
+           # --- END DEBUG ---
+
+           # Write the generated code and the wrapper script (read earlier) to the host temp directory
+           with open(llm_code_path_host, 'w', encoding='utf-8') as f_llm_script:
+               f_llm_script.write(generated_code)
+           with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
+               f_runner_script.write(exec_wrapper_code) # Write the content read from docker_exec_wrapper.py
+
+           # --- DEBUG: Check if files exist on host before mount ---
+           llm_exists = os.path.exists(llm_code_path_host)
+           runner_exists = os.path.exists(runner_script_path_host)
+           print(f"DEBUG: Host LLM code exists before run?: {llm_exists}")
+           print(f"DEBUG: Host runner script exists before run?: {runner_exists}")
+           if not llm_exists or not runner_exists:
+                print("ERROR: Script files not found on host before starting container!")
+                # Consider raising an error here if needed
+           # --- END DEBUG ---
+
+           # Write the test suite data to the host temp directory as JSON
+           try:
+               with open(test_suite_data_path_host, 'w', encoding='utf-8') as f_suite:
+                   json.dump(categorized_test_cases, f_suite)
+               print(f"DEBUG: Test suite data written to {test_suite_data_path_host}")
+           except Exception as e:
+               raise RuntimeError(f"Failed to write test suite data JSON to host: {e}")
+
+
+           # Start the container once, keep it running
+           print("Starting persistent Docker container...")
+           container = docker_client.containers.run(
+               image=DOCKER_IMAGE,
+               command=["sleep", "infinity"], # Keep container alive
+               # --- Volume mount removed, will copy files instead ---
+               # volumes={temp_dir: {'bind': sandbox_dir}},
+               working_dir=sandbox_dir, # Still useful for exec_run context
+               mem_limit=CONTAINER_MEM_LIMIT,
+               cpu_shares=CONTAINER_CPU_SHARES,
+                detach=True,
+                auto_remove=False, # We need to manage removal manually after loop
+                # Security options
+                # read_only=True, # Root filesystem read-only (volume is separate)
+               # network_mode='none', # Disable networking
+           )
+           # Ensure container is stopped and removed at the end
+           stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
+           print(f"Container {container.short_id} started.")
+           if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Starting Container', 'message': f'Container started ({container.short_id}).'})
+
+           # --- Create sandbox directory inside container ---
+           # Although working_dir is set, explicitly create it for clarity and put_archive target
+           print(f"Creating {sandbox_dir} inside container...")
+           container.exec_run(cmd=f"mkdir -p {sandbox_dir}")
+
+           # --- Prepare and copy files into the container ---
+           print(f"Copying {llm_code_filename}, {runner_script_filename_cont}, and {TEST_SUITE_DATA_FILENAME} to container:{sandbox_dir}...")
+           # Create an in-memory tar archive
+           tar_stream = io.BytesIO()
+           with tarfile.open(fileobj=tar_stream, mode='w') as tar:
+               # Add llm_sort.py
+               tar.add(llm_code_path_host, arcname=llm_code_filename)
+               # Add the runner script using its container-internal name
+               tar.add(runner_script_path_host, arcname=runner_script_filename_cont)
+               # Add the test suite data file
+               tar.add(test_suite_data_path_host, arcname=TEST_SUITE_DATA_FILENAME)
+
+           tar_stream.seek(0) # Rewind the stream
+           # Copy the archive to the container
+           container.put_archive(path=sandbox_dir, data=tar_stream)
+           print("Files copied.")
+           if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Copying Files', 'message': 'Benchmark files copied to container.'})
+
+           # Optional: Short delay after copy might still be beneficial? Unlikely needed now.
+           # time.sleep(0.1)
+
+           # --- Execute the wrapper script ONCE inside the container ---
+           print(f"Executing wrapper script {runner_script_path_cont} in container...")
+           # This is the final setup step before execution starts
+           if progress_callback:
+               progress_callback({
+                   'status': 'Running', # Change status to Running here
+                   'category': 'Executing All Cases', # Keep category general for the main run
+                   'total_cases': total_overall_cases_calculated,
+                   'message': 'Starting execution of all test cases in container...' # Updated message
+               })
+
+           exec_command = ["python", runner_script_path_cont]
+           container_results = None
+           exec_error = None
+
+           try:
+               # Use lower-level API to get exec_id before streaming
+               exec_create_resp = docker_client.api.exec_create(
+                   container=container.id,
+                   cmd=exec_command,
+                   workdir=sandbox_dir,
+                   stdout=True,
+                   stderr=True,
+                   tty=False # Important: TTY should be False for demux=True to work correctly
+               )
+               exec_id = exec_create_resp['Id']
+
+               # Start the execution and get the stream
+               exec_stream_generator = docker_client.api.exec_start(
+                   exec_id=exec_id,
+                   stream=True,
+                   demux=True # Separate stdout (1) and stderr (2)
+               )
+
+               stdout_acc = b""
+               stderr_buffer = b"" # Buffer for potentially incomplete stderr lines
+               exit_code = None # Will be determined after stream finishes
+
+               print(f"Streaming output from container exec_id: {exec_id}...")
+               # Iterate safely, checking for None from the generator
+               # Note: exec_start returns a generator directly
+               print(f"DEBUG BENCHMARK: Starting stream read loop for exec_id: {exec_id}") # DEBUG ADDED
+               # According to docker-py docs for exec_start(stream=True, demux=True),
+               # it yields tuples of (stdout_chunk, stderr_chunk).
+               for stdout_chunk, stderr_chunk in exec_stream_generator:
+                   # Log the raw chunks received
+                   # print(f"DEBUG BENCHMARK: Raw chunks received - stdout: {repr(stdout_chunk)}, stderr: {repr(stderr_chunk)}") # Optional: Very verbose
+
+                   if stdout_chunk:
+                       chunk_repr = repr(stdout_chunk)
+                       print(f"DEBUG BENCHMARK: Received STDOUT chunk - Size: {len(stdout_chunk)}, Content (repr): {chunk_repr[:200]}{'...' if len(stdout_chunk) > 200 else ''}") # DEBUG ADDED
+                       stdout_acc += stdout_chunk
+
+                   if stderr_chunk:
+                       chunk_repr = repr(stderr_chunk)
+                       print(f"DEBUG BENCHMARK: Received STDERR chunk - Size: {len(stderr_chunk)}, Content (repr): {chunk_repr[:200]}{'...' if len(stderr_chunk) > 200 else ''}") # DEBUG ADDED
+                       stderr_buffer += stderr_chunk
+                       # Process complete lines from stderr buffer
+                       lines = stderr_buffer.split(b'\n')
+                       stderr_buffer = lines[-1] # Keep incomplete line in buffer
+                       for line_bytes in lines[:-1]:
+                           line_str = line_bytes.decode('utf-8', errors='replace').strip()
+                           if not line_str: continue # Skip empty lines
+                           try:
+                               progress_json = json.loads(line_str)
+                               if progress_json.get("type") == "progress" and progress_callback:
+                                   # Pass the inner 'data' dict to the callback
+                                   progress_callback(progress_json.get("data", {}))
+                               else:
+                                   # Log unexpected JSON or non-progress messages from stderr
+                                   print(f"DEBUG (stderr JSON): {line_str}")
+                           except json.JSONDecodeError:
+                               # Log non-JSON lines from stderr for debugging
+                               print(f"DEBUG (stderr raw): {line_str}")
+                           except Exception as cb_err:
+                               print(f"ERROR: Progress callback failed: {cb_err}")
+
+                   # Check if both are None, which might indicate the end, although the loop should terminate naturally.
+                   if stdout_chunk is None and stderr_chunk is None:
+                       print(f"DEBUG BENCHMARK: Received (None, None) from stream generator (exec_id: {exec_id}). Assuming stream ended.") # DEBUG ADDED
+                       break # Exit loop if we get (None, None) explicitly
+
+               # --- Stream finished, now inspect exit code using the saved exec_id ---
+               print(f"DEBUG BENCHMARK: Stream finished for exec_id: {exec_id}. Inspecting exit code...") # DEBUG ADDED
+               exec_inspect = docker_client.api.exec_inspect(exec_id) # Use the saved exec_id
+               exit_code = exec_inspect.get('ExitCode')
+               print(f"DEBUG BENCHMARK: exec_inspect result: {exec_inspect}") # DEBUG ADDED
+               print(f"DEBUG BENCHMARK: Determined Exit Code: {exit_code}") # DEBUG ADDED
+
+               # Handle potential None exit code
+               if exit_code is None:
+                   print(f"WARNING/DEBUG: exec_inspect returned ExitCode=None immediately after stream finished. Inspect: {exec_inspect}") # DEBUG ADDED
+                   # Optionally add a small delay and retry inspect here if needed
+
+               # Process final stdout result
+               print(f"DEBUG BENCHMARK: Final accumulated stdout size: {len(stdout_acc)} bytes.") # DEBUG ADDED
+               stdout_content_for_debug = stdout_acc.decode('utf-8', errors='replace') # Decode for logging
+               print(f"DEBUG BENCHMARK: Final accumulated stdout content (first 1000 chars):\n---\n{stdout_content_for_debug[:1000]}\n---") # DEBUG ADDED
+
+               if exit_code == 0:
+                   print("DEBUG BENCHMARK: Exit code is 0. Processing stdout...") # DEBUG ADDED
+                   output_str_raw = stdout_acc.decode('utf-8', errors='replace')
+                   # Define markers
+                   start_marker = "---WRAPPER_STDOUT_MARKER_BEFORE---"
+                   end_marker = "---WRAPPER_STDOUT_MARKER_AFTER---"
+                   try:
+                       # Find markers
+                       start_index = output_str_raw.find(start_marker)
+                       end_index = output_str_raw.find(end_marker)
+
+                       if start_index == -1 or end_index == -1 or end_index <= start_index:
+                           print(f"DEBUG BENCHMARK: Markers not found or in wrong order in stdout.") # DEBUG ADDED
+                           raise ValueError(f"Could not find expected markers '{start_marker}' and '{end_marker}' in container stdout.")
+
+                       # Extract content between markers
+                       json_content_str = output_str_raw[start_index + len(start_marker):end_index].strip()
+                       print(f"DEBUG BENCHMARK: Extracted JSON content string (first 500 chars): {json_content_str[:500]}") # DEBUG ADDED
+
+                       if not json_content_str:
+                           print("DEBUG BENCHMARK: Extracted content between markers is empty.") # DEBUG ADDED
+                           raise ValueError("Container stdout between markers was empty (Exit Code 0).")
+
+                       # Parse the extracted JSON content
+                       final_message = json.loads(json_content_str)
+                       if final_message.get("type") == "result":
+                           container_results = final_message.get("data", {})
+                           print("Successfully received and parsed final result from container stdout.")
+                           results.update(container_results) # Update host results
+                           if container_results.get('error'):
+                               exec_error = f"Container wrapper script reported an internal error: {container_results['error']}"
+                               results['error'] = exec_error # Ensure host result reflects this
+                       else:
+                           raise ValueError(f"Unexpected JSON format in stdout: Missing 'type' or not 'result'. Content: {json_content_str[:200]}...")
+                   except (json.JSONDecodeError, ValueError) as json_e:
+                       output_snippet = output_str_raw[:1000] # Show raw output in error
+                       exec_error = f"Failed to decode/parse final JSON result from container stdout (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
+                       results['error'] = exec_error
+                   except Exception as parse_e:
+                       output_snippet = output_str_raw[:1000] # Show raw output in error
+                       exec_error = f"Unexpected error parsing container stdout (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
+                       results['error'] = exec_error
+               elif exit_code is not None: # Execution failed (non-zero exit code)
+                   stderr_snippet = stderr_buffer.decode('utf-8', errors='replace')[:500] # Include final stderr buffer content
+                   stdout_snippet = stdout_acc.decode('utf-8', errors='replace')[:500] # Use the raw stdout here
+                   exec_error = f"Container exec wrapper exited with code {exit_code}. Stderr:\n---\n{stderr_snippet}\n---\nStdout:\n---\n{stdout_snippet}\n---"
+                   results['error'] = exec_error
+               else: # Exit code remained None (problem inspecting exec)
+                    exec_error = f"Failed to determine container exec exit code. Inspect result: {exec_inspect}"
+                    results['error'] = exec_error
+
+
+           except (APIError, DockerConnectionError) as docker_exec_err:
+               exec_error = f"Docker API/Connection error during exec stream: {docker_exec_err}"
+               results['error'] = exec_error
+           except Exception as host_exec_e:
+               exec_error = f"Host error during container exec_run call: {host_exec_e}"
+               results['error'] = exec_error
+
+           # --- Final Progress Update ---
+           if progress_callback:
+               final_status = 'Completed' if not results.get('error') else 'Error'
+               progress_callback({
+                   'status': final_status,
+                   'category': 'Finished',
+                   'total_cases': total_overall_cases_calculated,
+                   'error': results.get('error'), # Report the final error status
+                   'message': 'Container execution finished.'
+               })
+
+           if exec_error:
+               print(f"Error during container execution: {exec_error}")
+           # No more loops or per-case logic needed here
+
+        # Catch errors during the initial container setup phase (remains the same)
+        except (APIError, DockerConnectionError) as docker_setup_err:
+            llm_error_str = f"Docker API/Connection error during container setup: {docker_setup_err}"
+            results['error'] = llm_error_str
+            print(f"Aborting evaluation due to Docker setup error: {llm_error_str}")
+            if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+            # ExitStack will handle cleanup if container was partially started
+            return results
+        except Exception as setup_exec_e:
+            llm_error_str = f"Error setting up container or temporary directory: {setup_exec_e}"
+            results['error'] = llm_error_str
+            print(f"Aborting evaluation due to setup error: {llm_error_str}")
+            if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+            # ExitStack will handle cleanup
+            return results
+        finally:
+            # ExitStack automatically handles stopping/removing the container and deleting the temp dir
+            if container:
+                 print(f"Container {container.short_id} stopped and removed.")
+            else:
+                 print("No container was started or setup failed.")
+
+
+    # --- Final Results ---
+    # The 'results' dictionary is now populated directly from the container's output
+    # or contains an error message if the execution failed.
+    # No further calculation needed here.
 
     return results
 
-
-# Modified: Accepts pre-loaded test cases
-def run_single_benchmark(llm_name: str, categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
+# Note: algorithm_name parameter is removed. We use the constant BENCHMARKED_ALGORITHM_LABEL internally.
+# Now accepts pre-generated code.
+def run_single_benchmark(llm_name: str, generated_code: str, categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
     """
-    Runs a benchmark for a single LLM generating a general sort algorithm against a pre-loaded test suite,
-    optionally reporting progress.
+    Runs the evaluation part of a benchmark for a single LLM or baseline, using pre-generated code
+    and provided test cases, optionally reporting progress. All evaluations run inside Docker.
+
+    Args:
+        llm_name: The identifier for the LLM or baseline used (for reporting).
+        generated_code: The Python code string (either LLM-generated or baseline).
+        categorized_test_cases: A dictionary containing the test cases, keyed by category.
+        progress_callback: An optional function to call with progress updates during evaluation.
+
+    Returns:
+        A dictionary containing benchmark evaluation results.
     """
-    algorithm_name = GENERAL_ALGORITHM_NAME # Use the constant label
-    print(f"Running benchmark for {llm_name} generating a {algorithm_name}...")
+    algorithm_name = BENCHMARKED_ALGORITHM_LABEL # Use the constant label
+    print(f"Evaluating benchmark for {llm_name} ({algorithm_name}) using provided code...")
 
-    # --- Callback for generation step ---
-    if progress_callback:
-        progress_callback({
-            'status': 'Generating Code', 'category': 'Setup', 'current_case': 0, 'total_cases': None
-        })
+    # Code generation is now done *before* calling this function.
+    # The initial progress callback indicating evaluation start is also handled before this call.
 
-    prompt = create_sort_prompt() # Call updated prompt function without algorithm name
-    generated_code = llm_interface.generate_code(llm_name, prompt)
+    # --- Run Evaluation ---
+    evaluation = evaluate_algorithm(
+        generated_code=generated_code, # Use the passed-in code
+        categorized_test_cases=categorized_test_cases,
+        progress_callback=progress_callback # Pass callback for evaluation steps
+    )
 
-    if not generated_code:
-        error_msg = 'Failed to generate code'
-        if progress_callback:
-             progress_callback({'status': 'Error', 'error': error_msg, 'category': 'Setup'})
-        # Use the constant algorithm_name in the return dict
-        return {'llm': llm_name, 'algorithm': algorithm_name, 'error': error_msg}
-
-    # --- Callback for evaluation step start ---
-    if progress_callback:
-        progress_callback({
-            'status': 'Evaluating Code', 'category': 'Evaluation', 'current_case': 0, 'total_cases': None # Total cases will be updated within evaluate_algorithm
-        })
-
-    # Pass the test suite down to evaluate_algorithm
-    evaluation = evaluate_algorithm(generated_code, categorized_test_cases, progress_callback=progress_callback)
-
-    # --- Callback for completion ---
+    # --- Callback for completion of evaluation ---
     final_status = 'Completed' if not evaluation.get('error') else 'Error'
     if progress_callback:
         progress_callback({
@@ -387,193 +533,101 @@ def run_single_benchmark(llm_name: str, categorized_test_cases: dict, progress_c
             'error': evaluation.get('error')
         })
 
-
     return {
         'llm': llm_name,
         'algorithm': algorithm_name,
         'correctness': evaluation.get('correctness'),
         'avg_time_ms': evaluation.get('avg_time_ms'),
         'baseline_avg_time_ms': evaluation.get('baseline_avg_time_ms'),
-        'performance_details': evaluation.get('performance_details'), # Add detailed results
+        'performance_details': evaluation.get('performance_details'),
         'error': evaluation.get('error'),
-        'generated_code': generated_code # Optionally store the code
+        # 'generated_code' is handled in app.py
     }
 
 
-# Constant for the baseline benchmark label
-BASELINE_ALGORITHM_NAME = "Python sorted() Baseline"
-
-# Modified: Accepts pre-loaded test cases
-def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
-    """
-    Runs a benchmark using Python's built-in sorted() function against a pre-loaded test suite
-    as a baseline, optionally reporting progress.
-
-    Args:
-        categorized_test_cases: The dictionary of pre-loaded test cases.
-        progress_callback: An optional function to call with progress updates.
-
-    Returns:
-        A dictionary containing benchmark results.
-    """
-    algorithm_name = BASELINE_ALGORITHM_NAME # Use the constant label
-    print(f"Running {algorithm_name} benchmark...")
-    results = {
-        'llm': PYTHON_SORTED_BENCHMARK, # Note: This constant needs to be defined/imported if run standalone
-        'algorithm': algorithm_name, # Use the constant label
-        'correctness': 100.0, # sorted() is assumed correct
-        'avg_time_ms': None, # This is the baseline itself
-        'baseline_avg_time_ms': None, # Will be calculated
-        'performance_details': {}, # To store per-category results
-        'error': None,
-        'generated_code': "N/A - Python sorted()"
-    }
-
-    # Test cases are now passed as an argument, no generation/loading here.
-    if not categorized_test_cases:
-        results['error'] = "Received empty or invalid test suite."
-        return results
-
-    # Aggregators for overall results
-    overall_baseline_time = 0
-    overall_total_cases = 0
-
-    # Aggregators for per-category results
-    category_results = defaultdict(lambda: {'baseline_time': 0, 'case_count': 0})
-
-    try:
-        # Calculate total cases for progress reporting
-        total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
-        current_overall_case_num = 0
-
-        # Iterate through each category and its test cases
-        for category, test_cases_in_category in categorized_test_cases.items():
-            print(f"  Benchmarking category: {category} ({len(test_cases_in_category)} cases)")
-            cat_stats = category_results[category] # Get stats dict for this category
-            num_cases_in_category = len(test_cases_in_category)
-
-            for i, test_case in enumerate(test_cases_in_category):
-                current_overall_case_num += 1
-                cat_stats['case_count'] += 1 # Increment here
-
-                # --- Prepare data for callback ---
-                progress_data = {
-                    'current_case': current_overall_case_num,
-                    'total_cases': total_overall_cases_calculated,
-                    'category': category,
-                    'category_case_num': i + 1,
-                    'category_total_cases': num_cases_in_category,
-                    'status': 'Running',
-                    'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                    # Calculate the expected output snippet for baseline
-                    'output_snippet': repr(sorted(test_case)[:10]) + ('...' if len(test_case) > 10 else ''),
-                    'error': None
-                }
-                # Report start of case processing (optional for baseline, but consistent)
-                # if progress_callback: progress_callback(progress_data)
-
-                baseline_input = list(test_case)
-                start_time = time.perf_counter()
-                _ = sorted(baseline_input) # Execute and time sorted()
-                end_time = time.perf_counter()
-                current_baseline_time = end_time - start_time
-
-                overall_baseline_time += current_baseline_time
-                cat_stats['baseline_time'] += current_baseline_time
-
-                # Report completion of case for baseline
-                if progress_callback:
-                    progress_data['status'] = 'Correct (Baseline)' # Baseline is assumed correct
-                    progress_callback(progress_data)
-
-
-        # --- Calculate Final Results ---
-
-        # Overall results
-        if overall_total_cases > 0:
-            overall_avg_time = (overall_baseline_time / overall_total_cases) * 1000
-            # Since this *is* the baseline, set both avg_time and baseline_avg_time
-            results['avg_time_ms'] = overall_avg_time
-            results['baseline_avg_time_ms'] = overall_avg_time
-        else:
-             results['avg_time_ms'] = 0.0
-             results['baseline_avg_time_ms'] = 0.0
-
-        # Per-category results
-        for category, stats in category_results.items():
-            cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
-            results['performance_details'][category] = {
-                'correctness': 100.0, # Assumed correct
-                'avg_time_ms': cat_avg_baseline_time, # This is the baseline time for this category
-                'baseline_avg_time_ms': cat_avg_baseline_time,
-                'count': stats['case_count']
-            }
-
-    except Exception as e:
-        results['error'] = f"Error during Python sorted() execution: {e}"
-        results['correctness'] = None # Mark correctness as unknown if execution fails
-        # Ensure performance_details is still present, even if empty
-        results['performance_details'] = results.get('performance_details', {})
-
-    return results
-
-
-# Example usage needs the constant defined in app.py or locally
-PYTHON_SORTED_BENCHMARK = "Python sorted()" # Define locally for example usage
-DEFAULT_TEST_SUITE_FILE = "test_suite.json"
-
+# Note: The __main__ block below is for standalone testing/example usage of benchmark.py.
+# Test suite generation is now handled by test_suite_generator.py.
 if __name__ == '__main__':
+    # Import argparse here as it's only needed for CLI execution
     import argparse
 
-    parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
-    parser.add_argument('--generate-suite', action='store_true', help=f"Generate and save a new test suite to {DEFAULT_TEST_SUITE_FILE}")
-    parser.add_argument('--suite-file', default=DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
-    # Add arguments to control generation parameters if needed, e.g.:
-    parser.add_argument('--num-cases', type=int, default=5, help="Number of cases per type/size for suite generation")
-    parser.add_argument('--size-s', type=int, default=20)
-    parser.add_argument('--size-m', type=int, default=20000)
-    parser.add_argument('--size-l', type=int, default=2000000)
-
+    parser = argparse.ArgumentParser(description="Benchmark Execution Examples")
+    # Use the default from the generator module
+    parser.add_argument('--suite-file', default=test_suite_generator.DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
 
     args = parser.parse_args()
 
-    if args.generate_suite:
-        gen_params = {
-            'size_small': args.size_s,
-            'size_medium': args.size_m,
-            'size_large': args.size_l,
-            'num_cases_per_type': args.num_cases
-        }
-        generate_and_save_test_suite(args.suite_file, **gen_params)
-    else:
-        # Example of running benchmarks using a loaded suite (adjust as needed)
-        print("Running example benchmarks with loaded suite...")
-        try:
-            test_suite = load_test_suite(args.suite_file)
+    # Example of running benchmarks using a loaded suite
+    print("Running example benchmarks with loaded suite...")
+    try:
+        # Load the test suite using the function from the generator module
+        test_suite = test_suite_generator.load_test_suite(args.suite_file)
 
-            # Example usage updated to pass the loaded test suite
-            # Run dummy_llm benchmark
-            print("\nRunning dummy_llm benchmark example...")
-            result_llm = run_single_benchmark('dummy_llm', categorized_test_cases=test_suite)
-            print("\nLLM (dummy_llm) Benchmark Result:\n", json.dumps(result_llm, indent=2))
+        # Example usage - Load suite first, then run benchmarks
+        print("\nRunning example benchmarks with loaded suite...")
 
-            # Run baseline benchmark
-            print("\nRunning baseline benchmark example...")
-            result_baseline = run_python_sorted_benchmark(categorized_test_cases=test_suite) # Run baseline
-            print("\nPython sorted() Benchmark Result:\n", json.dumps(result_baseline, indent=2))
+        # --- Run example with fixed Merge Sort code ---
+        # Note: Baseline run is removed from standalone example. Run it via the web UI.
+        print("\nRunning example benchmark with fixed Merge Sort code...")
 
-        except FileNotFoundError:
-            print(f"Test suite file '{args.suite_file}' not found. Generate it first using --generate-suite.")
-        except Exception as e:
+        EXAMPLE_MERGE_SORT_CODE = """
+import sys
+from typing import List, TypeVar
+
+# Increase recursion depth limit for potentially deep recursion with large lists
+try:
+    sys.setrecursionlimit(2000)
+except Exception:
+    pass
+
+T = TypeVar('T')
+
+def sort_algorithm(arr: List[T]) -> List[T]:
+    # Base Case
+    if len(arr) <= 1:
+        return arr[:]
+
+    # Divide
+    mid = len(arr) // 2
+    left_half = arr[:mid]
+    right_half = arr[mid:]
+
+    # Conquer
+    sorted_left = sort_algorithm(left_half)
+    sorted_right = sort_algorithm(right_half)
+
+    # Combine (Merge)
+    merged = []
+    left_idx, right_idx = 0, 0
+    while left_idx < len(sorted_left) and right_idx < len(sorted_right):
+        if sorted_left[left_idx] <= sorted_right[right_idx]:
+            merged.append(sorted_left[left_idx])
+            left_idx += 1
+        else:
+            merged.append(sorted_right[right_idx])
+            right_idx += 1
+
+    # Append Remaining
+    while left_idx < len(sorted_left):
+        merged.append(sorted_left[left_idx])
+        left_idx += 1
+    while right_idx < len(sorted_right):
+        merged.append(sorted_right[right_idx])
+        right_idx += 1
+
+    return merged
+"""
+            # Run the benchmark using the fixed code
+        result_example = run_single_benchmark(
+                llm_name="Example Merge Sort", # Use a descriptive name
+                generated_code=EXAMPLE_MERGE_SORT_CODE,
+                categorized_test_cases=test_suite
+                # Add progress_callback=print if you want to see progress updates
+            )
+        print("\nExample Merge Sort Benchmark Result:\n", json.dumps(result_example, indent=2))
+
+
+    except FileNotFoundError:
+            print(f"Test suite file '{args.suite_file}' not found. Generate it first using: python test_suite_generator.py --generate-suite")
+    except Exception as e:
             print(f"An error occurred during example benchmark run: {e}")
-
-
-    # Example if running another LLM test (assuming test_suite is loaded)
-    # try:
-    #     if 'test_suite' in locals():
-    #          result_other = run_single_benchmark('some_other_llm', categorized_test_cases=test_suite)
-    #          print("\nOther LLM Benchmark Result:\n", json.dumps(result_other, indent=2))
-    # except NameError:
-    #      print("Cannot run other LLM example without loaded test suite.")
-    # except Exception as e:
-    #      print(f"An error occurred during other LLM benchmark run: {e}")

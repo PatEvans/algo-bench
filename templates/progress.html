@@ -11,7 +11,9 @@
         #progress-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; font-size: 0.9em; }
         #progress-list li { border-bottom: 1px dashed #eee; padding: 5px 0; }
         #progress-list li:last-child { border-bottom: none; }
-        .status-correct { color: green; }
+        .progress-bar-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 5px; margin-bottom: 15px; height: 20px; overflow: hidden; }
+        .progress-bar { width: 0%; height: 100%; background-color: #4caf50; text-align: center; line-height: 20px; color: white; font-size: 0.8em; transition: width 0.3s ease-in-out; }
+        .status-correct { color: green; } /* Ensure this exists and looks okay */
         .status-incorrect { color: orange; }
         .status-error { color: red; font-weight: bold; }
         .status-running { color: blue; }
@@ -32,6 +34,13 @@
     <div id="progress-container">
         <div id="status">Status: Initializing...</div>
         <div id="overall-progress">Progress: 0 / ?</div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar">0%</div>
+        </div>
+        <div id="generated-code-area" style="margin-top: 15px; display: none;">
+            <h3>Generated Code:</h3>
+            <pre><code id="generated-code-content" style="background: #eee; padding: 10px; display: block; white-space: pre-wrap; word-wrap: break-word;"></code></pre>
+        </div>
         <ul id="progress-list">
             <li>Waiting for updates...</li>
         </ul>
@@ -48,19 +57,25 @@
         const progressListElement = document.getElementById('progress-list');
         const finalResultElement = document.getElementById('final-result');
         const resultDetailsElement = document.getElementById('result-details');
+        const generatedCodeArea = document.getElementById('generated-code-area');
+        const generatedCodeContent = document.getElementById('generated-code-content');
+        const progressBarElement = document.getElementById('progress-bar');
         let intervalId = null;
-        let lastUpdateCount = 0;
+        // Removed lastUpdateCount and displayedErrorIndices
+        let codeDisplayed = false; // Flag to prevent redisplaying code
 
         function formatProgressItem(item) {
             let statusClass = '';
             let statusText = item.status || 'Unknown';
-            if (statusText.startsWith('Correct')) statusClass = 'status-correct';
+            // Handle different statuses for styling
+            if (statusText === 'Correct') statusClass = 'status-correct';
             else if (statusText === 'Incorrect') statusClass = 'status-incorrect';
             else if (statusText === 'Error') statusClass = 'status-error';
-            else if (statusText === 'Running') statusClass = 'status-running';
+            // Add other statuses like 'Running', 'Setup' if needed, or handle default
 
+            // Format details for all relevant statuses (Correct, Incorrect, Error)
             let details = `Case ${item.current_case || '?'}/${item.total_cases || '?'}`;
-            if (item.category) {
+             if (item.category) {
                 details += ` (Category: ${item.category}`;
                 if (item.category_case_num && item.category_total_cases) {
                      details += ` ${item.category_case_num}/${item.category_total_cases}`;
@@ -109,24 +124,62 @@
                      overallProgressElement.textContent = `Progress: Waiting...`;
                 }
 
+                // Display generated code if available and not already shown
+                if (!codeDisplayed && data.generated_code) {
+                    generatedCodeContent.textContent = data.generated_code;
+                    generatedCodeArea.style.display = 'block';
+                    codeDisplayed = true;
+                }
 
-                // Update progress list only if new items arrived
+                 // Update Progress Bar
+                if (data.current_case !== null && data.total_cases !== null && data.total_cases > 0) {
+                    const progressPercent = Math.round((data.current_case / data.total_cases) * 100);
+                    progressBarElement.style.width = progressPercent + '%';
+                    progressBarElement.textContent = progressPercent + '%';
+                } else if (data.status === 'Completed') {
+                    // Ensure bar is 100% on completion if numbers weren't exact
+                    progressBarElement.style.width = '100%';
+                    progressBarElement.textContent = '100%';
+                } else {
+                    // Handle cases where total_cases might not be known yet or is 0
+                    progressBarElement.style.width = '0%';
+                    progressBarElement.textContent = '0%';
+                }
+
+
+                // Update progress list with ALL items received in this update
                 const progressItems = data.progress || [];
-                if (progressItems.length > 0 && progressItems.length !== lastUpdateCount) {
-                    progressListElement.innerHTML = ''; // Clear previous items
-                    // Display in chronological order (oldest first)
+                // Clear the 'Waiting...' message if it's there and we have items or the task is running/done
+                if (progressListElement.innerHTML.includes('Waiting') && (progressItems.length > 0 || ['Running', 'Completed', 'Error'].includes(data.status))) {
+                     progressListElement.innerHTML = '';
+                }
+
+                // Rebuild the list content entirely from the received progress items
+                // This is simpler than tracking indices and ensures consistency.
+                // For very long lists, optimizing might be needed, but this is robust.
+                if (progressItems.length > 0) {
+                    let listContent = '';
                     progressItems.forEach(item => {
-                        progressListElement.innerHTML += formatProgressItem(item);
+                        listContent += formatProgressItem(item);
                     });
-                    lastUpdateCount = progressItems.length;
-                } else if (progressListElement.innerHTML.includes('Waiting')) {
-                     progressListElement.innerHTML = ''; // Clear waiting message if updates start arriving
+                    progressListElement.innerHTML = listContent; // Replace content
+                    progressListElement.scrollTop = progressListElement.scrollHeight; // Scroll to bottom
                 }
 
 
                 // Check if task is finished
                 if (data.status === 'Completed' || data.status === 'Error') {
                     clearInterval(intervalId); // Stop polling
+                    // Ensure progress bar is 100% or reflects error state visually if needed
+                    if (data.status === 'Completed') {
+                         progressBarElement.style.width = '100%';
+                         progressBarElement.textContent = '100%';
+                         progressBarElement.style.backgroundColor = '#4caf50'; // Green for success
+                    } else {
+                         // Optional: Style progress bar differently on error
+                         progressBarElement.style.backgroundColor = '#f44336'; // Red for error
+                         // Keep percentage as is or set to 100%? Let's keep it as calculated.
+                    }
                     console.log("Benchmark finished. Status:", data.status);
                     if(data.final_result) {
                         // Display final summary result nicely formatted
