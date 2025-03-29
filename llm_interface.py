@@ -99,4 +99,3 @@ if __name__ == '__main__':
     # else:
     #     print("Failed to generate code.")
     print("llm_interface.py executed directly. No default action.")
-        print("Failed to generate code.")
