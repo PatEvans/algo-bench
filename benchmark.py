@@ -405,10 +405,10 @@ if __name__ == "__main__":
 
                for i, test_case in enumerate(test_cases_in_category):
                    current_overall_case_num += 1
-                    overall_total_cases += 1 # Increment overall counter here
-                    cat_stats['case_count'] += 1
+                   overall_total_cases += 1 # Increment overall counter here
+                   cat_stats['case_count'] += 1
 
-                    # --- Prepare data for callback ---
+                   # --- Prepare data for callback ---
                     progress_data = {
                         'current_case': current_overall_case_num,
                         'total_cases': total_overall_cases_calculated,
