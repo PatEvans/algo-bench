@@ -11,18 +11,12 @@ import time
 import random
 import llm_interface
 import json
-# import subprocess # No longer needed for execution
-import sys # To get the current Python executable path
 import tempfile # For creating temporary files AND directories
 import os # For file path operations
-import shutil # For removing temp dirs if needed (though tempfile handles it)
 from collections import defaultdict
-import time # Re-importing for clarity, used within functions
-import random # Re-importing for clarity, used within functions
-import llm_interface # Re-importing for clarity, used within functions
+import time # Used within functions
 from typing import Callable, Optional, Any # For type hinting the callback
-import io # To capture stdout within the subprocess script
-# import contextlib # No longer needed for host-side redirection
+# Note: 'io' and 'sys' are used within the exec_wrapper_code string
 import docker # For Docker interaction
 from docker.errors import APIError, ImageNotFound, ContainerError # Specific Docker errors
 from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
@@ -780,42 +774,26 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
     return results
 
 
-# Example usage needs the constant defined in app.py or locally
-PYTHON_SORTED_BENCHMARK = "Python sorted()" # Define locally for example usage
+# Default filename, can be overridden by command-line arg
 DEFAULT_TEST_SUITE_FILE = "test_suite.json"
+# Note: PYTHON_SORTED_BENCHMARK should ideally be imported or passed if needed here,
+# assuming it's defined centrally (e.g., in app.py).
+# If running standalone, this example might need adjustment or the constant defined here.
 
-# --- Placeholder functions for standalone execution ---
-def generate_and_save_test_suite(filename, **kwargs):
-    """Placeholder: Generates and saves test suite."""
-    print(f"Placeholder: Generating test suite with params {kwargs} and saving to {filename}")
-    # Actual implementation would call generate_test_cases and save to JSON
-    test_cases = generate_test_cases(**kwargs)
-    try:
-        with open(filename, 'w') as f:
-            json.dump(test_cases, f, indent=2)
-        print(f"Successfully generated and saved test suite to {filename}")
-    except Exception as e:
-        print(f"Error saving test suite to {filename}: {e}")
-
-def load_test_suite(filename):
-    """Placeholder: Loads test suite from file."""
-    print(f"Placeholder: Loading test suite from {filename}")
-    # Actual implementation would load from JSON
-    try:
-        with open(filename, 'r') as f:
-            test_suite = json.load(f)
-        print(f"Successfully loaded test suite from {filename}")
-        return test_suite
-    except FileNotFoundError:
-        print(f"Error: Test suite file '{filename}' not found.")
-        raise
-    except Exception as e:
-        print(f"Error loading test suite from {filename}: {e}")
-        raise
-# --- End Placeholder functions ---
 
 if __name__ == '__main__':
+    # Import argparse here as it's only needed for CLI execution
     import argparse
+    # Import the constant needed for the example run, if running standalone
+    try:
+        # Attempt to import from app if available (won't work standalone)
+        from app import PYTHON_SORTED_BENCHMARK
+    except ImportError:
+        # Define locally if running benchmark.py directly as a script
+        print("Warning: app.py not found, defining PYTHON_SORTED_BENCHMARK locally for example.")
+        PYTHON_SORTED_BENCHMARK = "Python sorted()"
+
+    parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
 
     parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
     parser.add_argument('--generate-suite', action='store_true', help=f"Generate and save a new test suite to {DEFAULT_TEST_SUITE_FILE}")
@@ -836,12 +814,32 @@ if __name__ == '__main__':
             'size_large': args.size_l,
             'num_cases_per_type': args.num_cases
         }
-        generate_and_save_test_suite(args.suite_file, **gen_params)
+        # Call the actual function, not the placeholder
+        print(f"Generating test suite with params {gen_params} and saving to {args.suite_file}")
+        try:
+            test_cases = generate_test_cases(**gen_params)
+            with open(args.suite_file, 'w') as f:
+                json.dump(test_cases, f, indent=2)
+            print(f"Successfully generated and saved test suite to {args.suite_file}")
+        except Exception as e:
+            print(f"Error generating or saving test suite to {args.suite_file}: {e}")
+
     else:
         # Example of running benchmarks using a loaded suite (adjust as needed)
         print("Running example benchmarks with loaded suite...")
         try:
-            test_suite = load_test_suite(args.suite_file)
+            # Call the actual function, not the placeholder
+            print(f"Loading test suite from {args.suite_file}")
+            try:
+                with open(args.suite_file, 'r') as f:
+                    test_suite = json.load(f)
+                print(f"Successfully loaded test suite from {args.suite_file}")
+            except FileNotFoundError:
+                print(f"Error: Test suite file '{args.suite_file}' not found.")
+                raise # Re-raise to be caught below
+            except Exception as e:
+                print(f"Error loading test suite from {args.suite_file}: {e}")
+                raise # Re-raise to be caught below
 
             # Example usage - Load suite first, then run benchmarks
             print("\nRunning example benchmarks with loaded suite...")
