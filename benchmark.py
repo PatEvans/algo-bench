@@ -406,6 +406,7 @@ def run_python_sorted_benchmark(progress_callback: Optional[Callable[[dict], Non
 
             for i, test_case in enumerate(test_cases_in_category):
                 current_overall_case_num += 1
+                overall_total_cases += 1 # Increment the overall counter
                 cat_stats['case_count'] += 1 # Increment here
 
                 # --- Prepare data for callback ---
