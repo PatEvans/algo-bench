@@ -18,7 +18,7 @@ COPY app.py .
 COPY benchmark.py .
 COPY database.py .
 COPY llm_interface.py .
-COPY test_suite_generator.py . # Add this line to copy the generator script
+COPY test_suite_generator.py .
 COPY templates/ ./templates/
 # If you have other .py files or data files needed by the app, add COPY lines for them here
 
