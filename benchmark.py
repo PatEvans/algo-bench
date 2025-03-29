@@ -239,19 +239,19 @@ if __name__ == "__main__":
             cat_stats['case_count'] += 1 # Increment here to match overall count logic
 
             # --- Prepare data for callback ---
-                progress_data = {
-                    'current_case': current_overall_case_num,
-                    'total_cases': total_overall_cases_calculated,
-                    'category': category,
-                    'category_case_num': i + 1,
-                    'category_total_cases': num_cases_in_category,
-                    'status': 'Running',
-                    'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                    'output_snippet': None,
-                    'error': None
-                }
-                if progress_callback:
-                    progress_callback(progress_data) # Report start of case processing
+            progress_data = {
+                'current_case': current_overall_case_num,
+                'total_cases': total_overall_cases_calculated,
+                'category': category,
+                'category_case_num': i + 1,
+                'category_total_cases': num_cases_in_category,
+                'status': 'Running',
+                'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
+                'output_snippet': None,
+                'error': None
+            }
+            if progress_callback:
+                progress_callback(progress_data) # Report start of case processing
 
             # Prepare inputs
             baseline_input = list(test_case) # For baseline timing
