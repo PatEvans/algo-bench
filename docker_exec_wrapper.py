@@ -1,160 +1,193 @@
-# This file contains the Python script executed inside the Docker container
-# by benchmark.py's evaluate_algorithm function.
-# It reads input data (list to sort) from stdin as JSON,
-# imports and runs the 'llm_sort.sort_algorithm' function from /sandbox/llm_sort.py,
-# and prints the result (or error details) as JSON to stdout.
+# This script runs inside the Docker container.
+# It loads the test suite from /sandbox/test_suite_data.json,
+# imports the LLM's sort function from /sandbox/llm_sort.py,
+# runs all test cases, times them, checks correctness,
+# calculates baseline times using sorted(), aggregates results,
+# and prints a single JSON object containing all results to stdout.
 
-import sys
-import json
 import sys
 import json
 import time
 import traceback
-import io
-import os # Need os module for file existence check
+import os
+from collections import defaultdict
 
-# --- Define the function to load and run ---
-def load_and_run_sort():
-    # Initialize result structure FIRST
-    result = {'output': None, 'error': None, 'stdout': None, 'stderr': None, 'exec_time_ms': None}
-    start_time = None # Initialize start_time
+# Constants
+LLM_CODE_MODULE = "llm_sort"
+LLM_CODE_FILE = f"/sandbox/{LLM_CODE_MODULE}.py"
+SORT_FUNCTION_NAME = "sort_algorithm"
+TEST_SUITE_FILE = "/sandbox/test_suite_data.json"
 
-    # Capture stdout/stderr using context managers for robustness
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    captured_stdout = io.StringIO()
-    captured_stderr = io.StringIO()
+def run_all_benchmarks():
+    """Loads suite, runs tests, aggregates, and returns results dict."""
+    # Initialize final results structure
+    results = {
+        'correctness': 0.0,
+        'avg_time_ms': None,
+        'baseline_avg_time_ms': None,
+        'performance_details': {},
+        'error': None # Will be populated on critical failure
+    }
 
-    final_output_json = None # Ensure this is defined in the outer scope
+    # Aggregators for overall results
+    overall_correct_count = 0
+    overall_llm_time_sec = 0.0 # Use seconds for aggregation
+    overall_baseline_time_sec = 0.0
+    overall_total_cases = 0
+    overall_llm_runs_timed = 0 # Count only successful, correct LLM runs
+
+    # Aggregators for per-category results
+    category_results = defaultdict(lambda: {
+        'correct_count': 0,
+        'llm_time_sec': 0.0,
+        'baseline_time_sec': 0.0,
+        'case_count': 0,
+        'llm_runs_timed': 0,
+        'errors': [] # Store errors per category if needed
+    })
+
+    sort_algorithm = None
+    categorized_test_cases = None
 
     try:
-        # Redirect streams
-        sys.stdout = captured_stdout
-        sys.stderr = captured_stderr
+        # --- 1. Load Test Suite ---
+        if not os.path.exists(TEST_SUITE_FILE):
+            raise FileNotFoundError(f"Test suite file not found: {TEST_SUITE_FILE}")
+        with open(TEST_SUITE_FILE, 'r', encoding='utf-8') as f:
+            categorized_test_cases = json.load(f)
+        if not categorized_test_cases:
+             raise ValueError("Test suite file is empty or invalid.")
 
-        start_time = time.perf_counter() # Start timer after setup
-
-        # --- Inner try for core logic: reading input, importing, executing ---
+        # --- 2. Load LLM Code ---
+        if not os.path.exists(LLM_CODE_FILE):
+            raise FileNotFoundError(f"LLM code file not found: {LLM_CODE_FILE}")
         try:
-            # 1. Read input JSON from stdin FIRST
-            input_data_json = sys.stdin.read()
-            if not input_data_json:
-                raise ValueError("No input data received via stdin.")
+            # Dynamically import the module
+            spec = importlib.util.spec_from_file_location(LLM_CODE_MODULE, LLM_CODE_FILE)
+            if spec is None or spec.loader is None:
+                 raise ImportError(f"Could not create module spec for {LLM_CODE_FILE}")
+            llm_module = importlib.util.module_from_spec(spec)
+            sys.modules[LLM_CODE_MODULE] = llm_module # Add to sys.modules for potential relative imports within the module
+            spec.loader.exec_module(llm_module)
+        except Exception as import_err:
+            raise ImportError(f"Error importing '{LLM_CODE_MODULE}' from {LLM_CODE_FILE}: {type(import_err).__name__}: {import_err}\n{traceback.format_exc()}")
 
-            # 2. Check for llm_sort.py existence
-            file_path = "/sandbox/llm_sort.py"
-            if not os.path.exists(file_path):
+        if not hasattr(llm_module, SORT_FUNCTION_NAME) or not callable(getattr(llm_module, SORT_FUNCTION_NAME)):
+            raise NameError(f"Function '{SORT_FUNCTION_NAME}' not found or not callable in {LLM_CODE_FILE}.")
+        sort_algorithm = getattr(llm_module, SORT_FUNCTION_NAME)
+
+        # --- 3. Iterate and Evaluate Test Cases ---
+        for category, test_cases_in_category in categorized_test_cases.items():
+            cat_stats = category_results[category]
+
+            for test_case in test_cases_in_category:
+                overall_total_cases += 1
+                cat_stats['case_count'] += 1
+                llm_time_sec = None
+                baseline_time_sec = None
+                is_correct = False
+                case_error = None
+
                 try:
-                    sandbox_contents = os.listdir('/sandbox')
-                    dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
-                except Exception as list_e:
-                    dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-                raise FileNotFoundError(
-                    f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}"
-                )
+                    # --- Baseline Timing ---
+                    baseline_input = list(test_case) # Copy for safety
+                    start_baseline = time.perf_counter()
+                    expected_output = sorted(baseline_input)
+                    end_baseline = time.perf_counter()
+                    baseline_time_sec = end_baseline - start_baseline
+                    overall_baseline_time_sec += baseline_time_sec
+                    cat_stats['baseline_time_sec'] += baseline_time_sec
 
-            # 3. Import the module
-            try:
-                # Ensure the sandbox is in the path for the import
-                # sys.path.insert(0, '/sandbox') # Not strictly needed if WORKDIR=/sandbox
-                import llm_sort
-            except ModuleNotFoundError:
-                raise ImportError("Could not import 'llm_sort'. Check WORKDIR or sys.path.")
-            except Exception as import_err:
-                raise ImportError(f"Error importing 'llm_sort': {type(import_err).__name__}: {import_err}")
+                    # --- LLM Execution and Timing ---
+                    llm_input = list(test_case) # Copy for safety
+                    start_llm = time.perf_counter()
+                    actual_output = sort_algorithm(llm_input)
+                    end_llm = time.perf_counter()
+                    llm_time_sec = end_llm - start_llm
 
-            # 4. Get the sort_algorithm function
-            if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm):
-                raise NameError("Function 'sort_algorithm' not found or not callable in llm_sort module.")
-            sort_algorithm = llm_sort.sort_algorithm
+                    # --- Correctness Check ---
+                    if actual_output == expected_output:
+                        is_correct = True
+                        overall_correct_count += 1
+                        cat_stats['correct_count'] += 1
+                        # Only aggregate time for correct runs
+                        overall_llm_time_sec += llm_time_sec
+                        cat_stats['llm_time_sec'] += llm_time_sec
+                        overall_llm_runs_timed += 1
+                        cat_stats['llm_runs_timed'] += 1
+                    else:
+                        # Optional: Log incorrectness details if needed for debugging wrapper
+                        # print(f"DEBUG WRAPPER: Incorrect sort for category '{category}'. Input: {test_case[:10]}..., Expected: {expected_output[:10]}..., Got: {actual_output[:10]}...", file=sys.stderr)
+                        pass
 
-            # 5. Parse the input JSON
-            input_list = json.loads(input_data_json)
 
-            # 6. Execute the sort_algorithm
-            output_list = sort_algorithm(input_list)
-            result['output'] = output_list # Store the actual Python object/list
+                except Exception as exec_err:
+                    # Error during LLM execution or baseline sort for this case
+                    case_error = f"{type(exec_err).__name__}: {exec_err}\n{traceback.format_exc()}"
+                    cat_stats['errors'].append({
+                        'input_snippet': repr(test_case[:20]) + ('...' if len(test_case) > 20 else ''),
+                        'error': case_error
+                    })
+                    # Optional: Log error details if needed for debugging wrapper
+                    # print(f"DEBUG WRAPPER: Error in category '{category}'. Input: {test_case[:10]}... Error: {case_error}", file=sys.stderr)
 
-        except Exception as e:
-            # Capture any exception during the core logic
-            result['error'] = f"{type(e).__name__}: {e}\\n{traceback.format_exc()}"
-        # --- End of inner try ---
 
-    finally:
-        # This block *always* runs, even if errors occurred above
+        # --- 4. Calculate Final Aggregated Results ---
+        if overall_total_cases > 0:
+            results['correctness'] = (overall_correct_count / overall_total_cases) * 100
+            results['baseline_avg_time_ms'] = (overall_baseline_time_sec / overall_total_cases) * 1000
+        if overall_llm_runs_timed > 0:
+            results['avg_time_ms'] = (overall_llm_time_sec / overall_llm_runs_timed) * 1000
 
-        # Calculate execution time if start_time was set
-        if start_time is not None:
-            end_time = time.perf_counter()
-            result['exec_time_ms'] = (end_time - start_time) * 1000
+        for category, stats in category_results.items():
+            cat_correctness = 0.0
+            if stats['case_count'] > 0:
+                cat_correctness = (stats['correct_count'] / stats['case_count']) * 100
 
-        # Restore streams and get captured content
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        result['stdout'] = captured_stdout.getvalue()
-        result['stderr'] = captured_stderr.getvalue()
-        captured_stdout.close()
-        captured_stderr.close()
+            cat_avg_llm_time_ms = None
+            if stats['llm_runs_timed'] > 0:
+                cat_avg_llm_time_ms = (stats['llm_time_sec'] / stats['llm_runs_timed']) * 1000
 
-        # Combine captured stdout/stderr into the error field if necessary
-        combined_error = result['error'] if result['error'] else ""
-        captured_stdout_val = result.get('stdout', '')
-        captured_stderr_val = result.get('stderr', '')
+            cat_avg_baseline_time_ms = None
+            if stats['case_count'] > 0:
+                cat_avg_baseline_time_ms = (stats['baseline_time_sec'] / stats['case_count']) * 1000
 
-        # Append captured streams to error message for context
-        if combined_error:
-            if captured_stdout_val:
-                # Escape backslashes and quotes in captured output for JSON safety
-                safe_stdout = json.dumps(captured_stdout_val)[1:-1] # Get string content without outer quotes
-                combined_error += "\\n--- Captured Stdout ---\\n" + safe_stdout
-            if captured_stderr_val:
-                safe_stderr = json.dumps(captured_stderr_val)[1:-1]
-                combined_error += "\\n--- Captured Stderr ---\\n" + safe_stderr
-        elif captured_stdout_val or captured_stderr_val: # No primary error, but stray output
-            combined_error = "(No primary exception, but captured output found)"
-            if captured_stdout_val:
-                safe_stdout = json.dumps(captured_stdout_val)[1:-1]
-                combined_error += "\\n--- Captured Stdout ---\\n" + safe_stdout
-            if captured_stderr_val:
-                safe_stderr = json.dumps(captured_stderr_val)[1:-1]
-                combined_error += "\\n--- Captured Stderr ---\\n" + safe_stderr
-
-        result['error'] = combined_error # Update result dict
-
-        # --- Serialize the final result dictionary to JSON ---
-        # This section MUST succeed or produce a fallback JSON string
-        try:
-            # Attempt to serialize the primary result (potentially updated error field)
-            final_output_json = json.dumps(result)
-        except TypeError as json_err:
-            # Fallback if output or other fields are not JSON serializable
-            print(f"Warning: JSON serialization failed for primary result: {json_err}", file=sys.stderr)
-            fallback_result = {
-                'output': repr(result.get('output')), # Use repr as fallback
-                'error': (result.get('error') or "") + f"\\nJSON Serialization Error: {json_err}",
-                'stdout': result.get('stdout'), # Keep original captured strings here
-                'stderr': result.get('stderr'),
-                'exec_time_ms': result.get('exec_time_ms')
+            results['performance_details'][category] = {
+                'correctness': cat_correctness,
+                'avg_time_ms': cat_avg_llm_time_ms,
+                'baseline_avg_time_ms': cat_avg_baseline_time_ms,
+                'count': stats['case_count'],
+                'error_count': len(stats['errors']) # Report count of errors in this category
+                # Optionally include 'errors': stats['errors'] if detailed errors are needed by host
             }
-            try:
-                final_output_json = json.dumps(fallback_result)
-            except Exception as fallback_json_err:
-                print(f"ERROR: JSON serialization failed even for fallback result: {fallback_json_err}", file=sys.stderr)
-                # Construct minimal error JSON manually, escaping the errors themselves
-                error_hint = json.dumps(repr(result.get("error")))[1:-1]
-                ser_error = json.dumps(repr(str(fallback_json_err)))[1:-1]
-                exec_time = result.get("exec_time_ms", "null") # Use "null" if missing
-                final_output_json = (
-                    f'{{"output": null, "error": "FATAL: Could not serialize execution results. '
-                    f'Original error hint: {error_hint}. Serialization error: {ser_error}", '
-                    f'"stdout": null, "stderr": null, "exec_time_ms": {exec_time}}}'
-                )
 
-        # --- Print the final JSON to the original stdout ---
-        # This print is the crucial communication back to the host
-        print(final_output_json)
+    except Exception as top_level_err:
+        # Catch critical errors (loading suite, importing code)
+        results['error'] = f"Critical error in wrapper: {type(top_level_err).__name__}: {top_level_err}\n{traceback.format_exc()}"
+        # Ensure performance_details exists even on error
+        results['performance_details'] = results.get('performance_details', {})
 
 
-# --- Run the function ---
+    # --- 5. Return the final results dictionary ---
+    return results
+
+# --- Main execution block ---
 if __name__ == "__main__":
-    load_and_run_sort()
+    # Need importlib for dynamic loading
+    import importlib.util
+
+    final_results = run_all_benchmarks()
+
+    # --- Print the final aggregated results as JSON to stdout ---
+    try:
+        print(json.dumps(final_results))
+    except TypeError as json_err:
+        # Fallback if results contain non-serializable data (shouldn't happen with current structure)
+        fallback_error = f"FATAL: Could not serialize final results dictionary: {json_err}. Original error: {final_results.get('error')}"
+        print(json.dumps({'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}))
+    except Exception as final_print_err:
+         # Ultimate fallback for any other printing error
+         print(json.dumps({'error': f"FATAL: Error printing final JSON: {final_print_err}", 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}))
+
+    # Exit explicitly - 0 if no critical error, 1 otherwise
+    sys.exit(1 if final_results.get('error') else 0)

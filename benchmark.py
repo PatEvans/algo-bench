@@ -20,7 +20,8 @@ from requests.exceptions import ConnectionError as DockerConnectionError # For D
 from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
 import tarfile # To create tar archives for copying into container
 import io # To handle in-memory tar archive
-import socket # For socket operations with exec_run
+# Socket import no longer needed here as we don't interact with exec stream directly
+# import socket
 
 # Import functions from the new test suite generator module
 import test_suite_generator
@@ -34,6 +35,9 @@ GENERAL_ALGORITHM_NAME = "LLM General Sort"
 BASELINE_ALGORITHM_NAME = "Python sorted() Baseline"
 # Constant for the filename of the docker wrapper script
 DOCKER_WRAPPER_SCRIPT_NAME = "docker_exec_wrapper.py"
+# Constant for the filename of the test suite data inside the container
+TEST_SUITE_DATA_FILENAME = "test_suite_data.json"
+
 
 def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[list[int], list[int]]]:
     """Generates small input/output examples for the LLM prompt."""
@@ -113,24 +117,22 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         results['error'] = "No test cases provided for evaluation."
         return results
 
-    # Aggregators for overall results
-    overall_correct_count = 0
-    overall_llm_time = 0
-    overall_baseline_time = 0
-    overall_total_cases = 0
-    overall_llm_runs_timed = 0 # Count only successful, correct LLM runs for averaging
-
-    # Aggregators for per-category results
-    category_results = defaultdict(lambda: {'correct_count': 0, 'llm_time': 0, 'baseline_time': 0, 'case_count': 0, 'llm_runs_timed': 0})
-
-    # Calculate total cases for progress reporting
+    # Aggregation is now done inside the container. Initialize results structure.
+    results = {
+        'correctness': 0.0,
+        'avg_time_ms': None,
+        'baseline_avg_time_ms': None,
+        'performance_details': {},
+        'error': None
+    }
+    # Calculate total cases for initial progress reporting
     total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
-    current_overall_case_num = 0
-    # Define a timeout for each *individual execution* within the container
-    EXEC_TIMEOUT = 120.0 # Timeout in seconds for container.exec_run
+
     # Define the Docker image to use
     DOCKER_IMAGE = "python:3.10-slim" # Or choose another appropriate Python image
     # Define container resource limits (adjust as needed)
+    # EXEC_TIMEOUT is now handled by the wrapper script's logic or potentially docker exec timeout param
+    EXEC_TIMEOUT_SECONDS = 300 # Timeout for the *entire* exec call (adjust as needed)
     CONTAINER_MEM_LIMIT = "256m" # e.g., 256 MB memory limit
     CONTAINER_CPU_SHARES = 512 # Relative CPU weight (default 1024)
 
@@ -189,10 +191,13 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # to the temp dir for copying into the container, using a consistent name inside.
            runner_script_filename_cont = "exec_runner.py" # Name inside container
            runner_script_path_host = os.path.join(temp_dir, runner_script_filename_cont) # Path on host temp dir
+           # Define path for the test suite data file on the host
+           test_suite_data_path_host = os.path.join(temp_dir, TEST_SUITE_DATA_FILENAME)
 
            sandbox_dir = "/sandbox" # Mount point inside container
            llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
            runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename_cont}" # Container path for runner
+           test_suite_data_path_cont = f"{sandbox_dir}/{TEST_SUITE_DATA_FILENAME}" # Container path for test data
 
            # --- DEBUG: Verify host files before container start ---
            print(f"DEBUG: Host temporary directory: {temp_dir}")
@@ -215,6 +220,15 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                 print("ERROR: Script files not found on host before starting container!")
                 # Consider raising an error here if needed
            # --- END DEBUG ---
+
+           # Write the test suite data to the host temp directory as JSON
+           try:
+               with open(test_suite_data_path_host, 'w', encoding='utf-8') as f_suite:
+                   json.dump(categorized_test_cases, f_suite)
+               print(f"DEBUG: Test suite data written to {test_suite_data_path_host}")
+           except Exception as e:
+               raise RuntimeError(f"Failed to write test suite data JSON to host: {e}")
+
 
            # Start the container once, keep it running
            print("Starting persistent Docker container...")
@@ -242,8 +256,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            container.exec_run(cmd=f"mkdir -p {sandbox_dir}")
 
            # --- Prepare and copy files into the container ---
-           # Use the container-internal runner script name in the log message
-           print(f"Copying {llm_code_filename} and {runner_script_filename_cont} to container:{sandbox_dir}...")
+           print(f"Copying {llm_code_filename}, {runner_script_filename_cont}, and {TEST_SUITE_DATA_FILENAME} to container:{sandbox_dir}...")
            # Create an in-memory tar archive
            tar_stream = io.BytesIO()
            with tarfile.open(fileobj=tar_stream, mode='w') as tar:
@@ -251,291 +264,95 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                tar.add(llm_code_path_host, arcname=llm_code_filename)
                # Add the runner script using its container-internal name
                tar.add(runner_script_path_host, arcname=runner_script_filename_cont)
+               # Add the test suite data file
+               tar.add(test_suite_data_path_host, arcname=TEST_SUITE_DATA_FILENAME)
 
            tar_stream.seek(0) # Rewind the stream
            # Copy the archive to the container
            container.put_archive(path=sandbox_dir, data=tar_stream)
            print("Files copied.")
 
-           # Optional: Short delay after copy might still be beneficial
-           # time.sleep(1)
+           # Optional: Short delay after copy might still be beneficial? Unlikely needed now.
+           # time.sleep(0.1)
 
-           # Iterate through each category and its test cases
-           for category, test_cases_in_category in categorized_test_cases.items():
-               print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
-               cat_stats = category_results[category] # Get stats dict for this category
-               num_cases_in_category = len(test_cases_in_category)
+           # --- Execute the wrapper script ONCE inside the container ---
+           print(f"Executing wrapper script {runner_script_path_cont} in container...")
+           if progress_callback:
+               progress_callback({
+                   'status': 'Running',
+                   'category': 'Executing All Cases',
+                   'total_cases': total_overall_cases_calculated,
+                   'message': 'Running all test cases within the container...'
+               })
 
-               for i, test_case in enumerate(test_cases_in_category):
-                   current_overall_case_num += 1
-                   overall_total_cases += 1 # Increment overall counter here
-                   cat_stats['case_count'] += 1
+           exec_command = ["python", runner_script_path_cont]
+           container_results = None
+           exec_error = None
 
-                   # --- Prepare data for callback ---
-                   progress_data = {
-                       'current_case': current_overall_case_num,
-                       'total_cases': total_overall_cases_calculated,
-                       'category': category,
-                       'category_case_num': i + 1,
-                       'category_total_cases': num_cases_in_category,
-                       'status': 'Running',
-                       'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                       'output_snippet': None,
-                       'error': None
-                   }
-                   if progress_callback:
-                       progress_callback(progress_data) # Report start of case processing
+           try:
+               # Use exec_run with stream=False, demux=False as we expect a single JSON output
+               # Set a timeout for the entire execution
+               exec_result = container.exec_run(
+                   cmd=exec_command,
+                   stream=False,
+                   demux=False,
+                   workdir=sandbox_dir,
+                   # Consider adding a timeout here if EXEC_TIMEOUT_SECONDS is defined
+                   # timeout=EXEC_TIMEOUT_SECONDS # This might not be directly supported, check docker-py docs
+               )
 
-                   # Prepare inputs
-                   baseline_input = list(test_case) # For baseline timing
-                   expected_output = sorted(test_case) # Ground truth
-                   input_json = json.dumps(test_case)
+               exit_code = exec_result.exit_code
+               output_bytes = exec_result.output
 
-                   # --- DEBUG: List directory contents before executing ---
+               if exit_code == 0:
                    try:
-                       ls_cmd = ["ls", "-l", sandbox_dir]
-                       ls_result = container.exec_run(cmd=ls_cmd, stream=False, demux=False)
-                       ls_output = "(no output)"
-                       if ls_result.output:
-                           ls_output = ls_result.output.decode('utf-8', errors='replace').strip()
-                       print(f"DEBUG: Contents of {sandbox_dir} before exec: Exit={ls_result.exit_code}\n{ls_output}")
-                   except Exception as ls_e:
-                       print(f"DEBUG: Error listing {sandbox_dir}: {ls_e}")
-                   # --- END DEBUG ---
+                       output_str = output_bytes.decode('utf-8').strip()
+                       # Expecting a single JSON object containing all results
+                       container_results = json.loads(output_str)
+                       print("Successfully received and parsed results from container.")
+                       # Update host-side results based on container output
+                       results.update(container_results) # Overwrite defaults with container results
+                       # Check if the container reported an internal error
+                       if container_results.get('error'):
+                           exec_error = f"Container wrapper script reported an internal error: {container_results['error']}"
+                           results['error'] = exec_error # Ensure host result reflects this
+                   except json.JSONDecodeError as json_e:
+                       output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
+                       exec_error = f"Failed to decode JSON result from container (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
+                       results['error'] = exec_error
+                   except Exception as parse_e:
+                       output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
+                       exec_error = f"Unexpected error parsing container output (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
+                       results['error'] = exec_error
+               else:
+                   # Execution failed
+                   output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
+                   exec_error = f"Container exec wrapper exited with code {exit_code}. Output:\n---\n{output_snippet}\n---"
+                   results['error'] = exec_error # Set the error in the main results dict
 
-                   # --- Execute code inside the running container using exec_run ---
-                   actual_output = None
-                   llm_error_str = None
-                   current_llm_time_ms = None # Time reported by the container script
-                   is_correct = False
+           except (APIError, DockerConnectionError) as docker_exec_err:
+               exec_error = f"Docker API/Connection error during exec_run: {docker_exec_err}"
+               results['error'] = exec_error
+           except Exception as host_exec_e:
+               exec_error = f"Host error during container exec_run call: {host_exec_e}"
+               results['error'] = exec_error
 
-                   host_exec_start_time = time.perf_counter() # Host-side timing for exec_run call itself
+           # --- Final Progress Update ---
+           if progress_callback:
+               final_status = 'Completed' if not results.get('error') else 'Error'
+               progress_callback({
+                   'status': final_status,
+                   'category': 'Finished',
+                   'total_cases': total_overall_cases_calculated,
+                   'error': results.get('error'), # Report the final error status
+                   'message': 'Container execution finished.'
+               })
 
-                   try:
-                       # Command to execute the runner script file directly inside the container
-                       # Use the container-internal runner script path
-                       exec_command = ["python", runner_script_path_cont] # e.g., ["python", "/sandbox/exec_runner.py"]
+           if exec_error:
+               print(f"Error during container execution: {exec_error}")
+           # No more loops or per-case logic needed here
 
-                       # Use socket=True for reliable stdin/stdout handling
-                       exec_id = docker_client.api.exec_create(
-                           container.id,
-                           cmd=exec_command,
-                           stdin=True,
-                           stdout=True,
-                           stderr=True, # Still capture stderr, wrapper combines it
-                           workdir=sandbox_dir,
-                       )
-                       _sock = docker_client.api.exec_start(exec_id, socket=True)
-                       _sock_low_level = _sock._sock # Get the underlying socket
-
-                       # Define and set socket timeout
-                       SOCKET_TIMEOUT = 120.0 # seconds - Adjust if needed for very large cases
-                       _sock_low_level.settimeout(SOCKET_TIMEOUT)
-
-                       output_bytes = b""
-                       parsed_result = None
-
-                       # Write input JSON to stdin stream using sendall
-                       input_bytes = input_json.encode('utf-8')
-                       _sock_low_level.sendall(input_bytes)
-                       # IMPORTANT: Close the write half to signal EOF to the container's stdin.read()
-                       _sock_low_level.shutdown(socket.SHUT_WR)
-
-                       # Read Docker stream protocol (header + payload)
-                       output_bytes = b"" # Initialize to empty
-                       try:
-                           import struct # Needed for unpacking header
-
-                           while True:
-                               # Read the 8-byte header
-                               header = _sock_low_level.recv(8)
-                               if not header:
-                                   break # Connection closed normally
-
-                               if len(header) < 8:
-                                   llm_error_str = f"Socket error: Received incomplete stream header (got {len(header)} bytes)."
-                                   output_bytes = b"" # Discard potentially corrupt data
-                                   break
-
-                               # Unpack the header (stream_type: 1 byte, size: 4 bytes big-endian)
-                               stream_type = header[0]
-                               payload_size = struct.unpack('>I', header[4:])[0]
-
-                               # Read the payload
-                               payload = b""
-                               remaining_size = payload_size
-                               while remaining_size > 0:
-                                   chunk = _sock_low_level.recv(min(remaining_size, 4096))
-                                   if not chunk:
-                                       llm_error_str = f"Socket error: Connection closed while reading payload (expected {payload_size} bytes, got {len(payload)})."
-                                       output_bytes = b"" # Discard partial payload
-                                       break # Exit inner loop
-                                   payload += chunk
-                                   remaining_size -= len(chunk)
-
-                               if llm_error_str: # Check if inner loop broke due to error
-                                   break # Exit outer loop
-
-                               # Accumulate stdout stream (type 1) payloads
-                               if stream_type == 1:
-                                   output_bytes += payload # Append the stdout payload
-                                   # Do not break here; continue reading until stream closes
-                               elif stream_type == 2:
-                                   # Log stderr for debugging if needed
-                                   stderr_payload = payload.decode('utf-8', errors='replace')
-                                   print(f"DEBUG: Received stderr stream from container: {stderr_payload}")
-                                   # Continue reading in case stdout follows stderr
-                               else:
-                                   # Ignore other stream types (e.g., stdin type 0)
-                                   print(f"DEBUG: Ignoring stream type {stream_type} with size {payload_size}")
-                                   # Continue reading
-
-                       except socket.timeout:
-                           llm_error_str = f"Socket operation timed out after {SOCKET_TIMEOUT} seconds (LLM code likely too slow or hung)."
-                       except (socket.error, BrokenPipeError, OSError) as sock_err:
-                           llm_error_str = f"Socket error during exec stream read: {sock_err}"
-                       except struct.error as unpack_err:
-                           llm_error_str = f"Error unpacking Docker stream header: {unpack_err}. Header bytes: {repr(header)}"
-                       except Exception as stream_err:
-                           llm_error_str = f"Error during socket stream I/O: {stream_err}"
-                       finally:
-                           # Ensure socket is closed (Associated with the try block above for stream reading)
-                           if _sock_low_level:
-                               _sock_low_level.close()
-                           if _sock: # Close the high-level wrapper too
-                               _sock.close()
-
-                       host_exec_end_time = time.perf_counter() # Timing remains similar
-
-                       # Check exec exit code *after* reading output
-                       exec_inspect = docker_client.api.exec_inspect(exec_id)
-                       exit_code = exec_inspect.get('ExitCode')
-
-                       # Handle cases where ExitCode might be None initially for very fast processes
-                       if exit_code is None:
-                           print(f"DEBUG: Initial exec_inspect returned ExitCode=None for exec_id={exec_id}. Retrying after short delay...")
-                           time.sleep(0.1) # Wait 100ms
-                           exec_inspect = docker_client.api.exec_inspect(exec_id)
-                           exit_code = exec_inspect.get('ExitCode')
-                           print(f"DEBUG: Retry exec_inspect result: ExitCode={exit_code}, Running={exec_inspect.get('Running')}")
-
-
-                       # Decode and parse output bytes (similar logic as before)
-                       if llm_error_str is None: # Only proceed if no socket error
-                           output_str = "" # Initialize output_str
-                           try:
-                               output_str = output_bytes.decode('utf-8', errors='replace').strip()
-                           except Exception as decode_err:
-                               raw_bytes_repr = repr(output_bytes[:200])
-                               llm_error_str = (f"Host failed to decode exec output: {decode_err}. "
-                                                f"Raw bytes: {raw_bytes_repr}")
-
-                           if output_str and llm_error_str is None:
-                               try:
-                                   # Find the last line that looks like JSON
-                                   last_line = output_str.splitlines()[-1]
-                                   parsed_result = json.loads(last_line)
-                               except (json.JSONDecodeError, IndexError) as json_e:
-                                   llm_error_str = f"Failed to decode JSON result from exec output: {json_e}. Full output:\n---\n{output_str[:1000]}\n---"
-                               except Exception as parse_e:
-                                   llm_error_str = f"Unexpected error parsing exec output: {parse_e}. Full output:\n---\n{output_str[:1000]}\n---"
-
-                       # --- Process the parsed result (logic remains largely the same) ---
-                       if llm_error_str: # If host-level parsing or socket error occurred
-                           pass # Error already set
-                       elif exit_code is None:
-                           llm_error_str = f"Exec did not return an exit code (inspect result: {exec_inspect})."
-                       elif exit_code != 0:
-                           llm_error_str = f"Exec wrapper exited with code {exit_code}."
-                           # Append JSON error if available, otherwise append raw output
-                           if parsed_result and parsed_result.get('error'):
-                               llm_error_str += f" Internal error:\n---\n{parsed_result['error']}\n---"
-                           elif output_str:
-                               llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
-                       elif parsed_result is None:
-                           # Should not happen if exit code is 0 and no parsing error occurred, but check defensively
-                           llm_error_str = "Exec wrapper exited code 0 but host failed to parse JSON result."
-                           if output_str:
-                               output_snippet = output_str[:1000]
-                               llm_error_str += f" Raw output:\n---\n{output_snippet}\n---"
-                       elif parsed_result.get('error'):
-                           # Exit code 0, but the script internally caught an error
-                           internal_error = parsed_result['error']
-                           llm_error_str = f"Exec wrapper reported internal error:\n---\n{internal_error}\n---"
-                       else:
-                           # --- Success Case ---
-                           actual_output = parsed_result.get('output')
-                           current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
-
-                           if actual_output == expected_output:
-                               is_correct = True
-                               overall_correct_count += 1
-                               cat_stats['correct_count'] += 1
-                               if current_llm_time_ms is not None:
-                                   # Convert ms to seconds for aggregation
-                                   time_sec = current_llm_time_ms / 1000.0
-                                   overall_llm_time += time_sec
-                                   cat_stats['llm_time'] += time_sec
-                                   overall_llm_runs_timed += 1
-                                   cat_stats['llm_runs_timed'] += 1
-                               progress_data['status'] = 'Correct'
-                           else:
-                               # Log incorrect sort
-                               actual_repr = repr(actual_output)
-                               if isinstance(actual_output, list) and len(actual_output) > 20:
-                                   actual_repr = repr(actual_output[:20]) + '...'
-                               expected_repr = repr(expected_output)
-                               if len(expected_output) > 20:
-                                   expected_repr = repr(expected_output[:20]) + '...'
-                               test_repr = repr(test_case)
-                               if len(test_case) > 20:
-                                   test_repr = repr(test_case[:20]) + '...'
-                               print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
-                               progress_data['status'] = 'Incorrect'
-                               progress_data['output_snippet'] = actual_repr
-                                 # Optionally capture the incorrect output in llm_error_str for reporting?
-                                 # llm_error_str = f"Incorrect output. Expected: {expected_repr}, Got: {actual_repr}"
-
-                   # Catch host-side errors during exec_run call itself
-                   except (APIError, DockerConnectionError) as docker_exec_err:
-                       llm_error_str = f"Docker API/Connection error during exec_run: {docker_exec_err}"
-                       # This might be fatal for subsequent calls, consider aborting? For now, report per case.
-                   except Exception as host_exec_e:
-                       llm_error_str = f"Host error during container exec_run setup or call: {host_exec_e}"
-
-
-                   # --- Handle LLM Run Outcome for this case ---
-                   if llm_error_str:
-                       test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                       print(f"    Error during LLM sort execution: Input={test_repr}, Error={llm_error_str}")
-                       if progress_callback:
-                           progress_data['status'] = 'Error'
-                           progress_data['error'] = llm_error_str
-                           progress_callback(progress_data)
-                   elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
-                       progress_callback(progress_data)
-
-
-                   # --- Time Python's built-in sorted() ---
-                   baseline_start_time = time.perf_counter()
-                   current_baseline_time = None
-                   try:
-                       _ = sorted(baseline_input) # Execute baseline sort
-                       baseline_end_time = time.perf_counter()
-                       current_baseline_time = baseline_end_time - baseline_start_time
-                       overall_baseline_time += current_baseline_time
-                       cat_stats['baseline_time'] += current_baseline_time
-                   except Exception as e:
-                       test_repr = repr(test_case)
-                       if len(test_case) > 20:
-                           test_repr = repr(test_case[:20]) + '...'
-                       print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
-                       # Decide how to handle baseline errors (e.g., skip timing for this case?)
-
-               # --- End of loop over test cases within a category ---
-           # --- End of loop over categories ---
-
-        # Catch errors during the initial container setup phase
+        # Catch errors during the initial container setup phase (remains the same)
         except (APIError, DockerConnectionError) as docker_setup_err:
             llm_error_str = f"Docker API/Connection error during container setup: {docker_setup_err}"
             results['error'] = llm_error_str
@@ -558,41 +375,10 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                  print("No container was started or setup failed.")
 
 
-    # --- Calculate Final Results ---
-    # (Error handling for overall execution moved outside the loop)
-    # Check if any fundamental error occurred before processing cases (e.g., invalid generated_code structure)
-    # This part is less relevant now as syntax errors are caught per-case by subprocess
-
-    # Overall results
-        if overall_total_cases > 0:
-            results['correctness'] = (overall_correct_count / overall_total_cases) * 100
-            results['baseline_avg_time_ms'] = (overall_baseline_time / overall_total_cases) * 1000
-        if overall_llm_runs_timed > 0: # Average LLM time only over correctly sorted cases
-            results['avg_time_ms'] = (overall_llm_time / overall_llm_runs_timed) * 1000
-
-       # Per-category results
-        for category, stats in category_results.items():
-           cat_correctness = 0.0
-           if stats['case_count'] > 0:
-               cat_correctness = (stats['correct_count'] / stats['case_count']) * 100
-
-           cat_avg_llm_time = None
-           if stats['llm_runs_timed'] > 0:
-               cat_avg_llm_time = (stats['llm_time'] / stats['llm_runs_timed']) * 1000
-
-           cat_avg_baseline_time = None
-           if stats['case_count'] > 0:
-               cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000
-
-           results['performance_details'][category] = {
-               'correctness': cat_correctness,
-               'avg_time_ms': cat_avg_llm_time, # Note: Includes container exec overhead
-                'baseline_avg_time_ms': cat_avg_baseline_time,
-                'count': stats['case_count']
-            }
-
-    # No top-level try-except for SyntaxError needed anymore, handled per case.
-    # General errors during setup might still occur but are less likely.
+    # --- Final Results ---
+    # The 'results' dictionary is now populated directly from the container's output
+    # or contains an error message if the execution failed.
+    # No further calculation needed here.
 
     return results
 
