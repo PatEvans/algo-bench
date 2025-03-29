@@ -323,8 +323,10 @@ if __name__ == "__main__":
                  print(f"--- Successfully wrote error file (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
              except Exception as write_e:
                  # If we can't even write the error, print to original stderr as last resort
-                 print(f"CRITICAL: Failed to write error log to {ERROR_FILE}: {write_e}", file=sys.stderr)
-                 print(f"Original error was:\n{error_message}", file=sys.stderr)
+                 # Avoid f-string for the error_message itself to prevent syntax errors
+                 print(f"CRITICAL: Failed to write error log to {ERROR_FILE}: {write_e}", file=original_stderr, flush=True) # Use original_stderr
+                 print("Original error was:", file=original_stderr, flush=True) # Use original_stderr
+                 print(error_message, file=original_stderr, flush=True) # Print raw message separately
                  exit_code = 3 # Yet another exit code
 
         # Close StringIO objects
