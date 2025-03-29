@@ -651,7 +651,6 @@ def run_single_benchmark(llm_name: str, generated_code: str, categorized_test_ca
             'error': evaluation.get('error')
         })
 
-
     return {
         'llm': llm_name,
         'algorithm': algorithm_name,
