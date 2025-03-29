@@ -441,11 +441,11 @@ if __name__ == "__main__":
                        # Pass input via stdin=True
                        exec_command = ["python", runner_script_path_cont] # e.g., ["python", "/sandbox/exec_runner.py"]
 
-                        # Use stream=False, demux=False to get combined output as bytes
-                        exec_result = container.exec_run(
-                            cmd=exec_command,
-                            stdin=True,
-                            stdout=True, # Capture stdout from exec_run
+                       # Use stream=False, demux=False to get combined output as bytes
+                       exec_result = container.exec_run(
+                           cmd=exec_command,
+                           stdin=True,
+                           stdout=True, # Capture stdout from exec_run
                             stderr=True, # Capture stderr from exec_run (though wrapper redirects)
                             socket=False, # Use simple exec, not socket
                             stream=False, # Get result after completion
