@@ -454,6 +454,16 @@ if __name__ == "__main__":
                    expected_output = sorted(test_case) # Ground truth
                    input_json = json.dumps(test_case)
 
+                   # --- DEBUG: List directory contents before executing ---
+                   try:
+                       ls_cmd = ["ls", "-l", sandbox_dir]
+                       ls_result = container.exec_run(cmd=ls_cmd, stream=False, demux=False)
+                       ls_output = ls_result.output.decode('utf-8', errors='replace').strip() if ls_result.output else "(no output)"
+                       print(f"DEBUG: Contents of {sandbox_dir} before exec: Exit={ls_result.exit_code}\n{ls_output}")
+                   except Exception as ls_e:
+                       print(f"DEBUG: Error listing {sandbox_dir}: {ls_e}")
+                   # --- END DEBUG ---
+
                    # --- Execute code inside the running container using exec_run ---
                    actual_output = None
                    llm_error_str = None
