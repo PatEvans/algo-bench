@@ -11,12 +11,25 @@ import time
 import traceback
 import os
 from collections import defaultdict
+import importlib.util # Moved import here, needed earlier
 
 # Constants
 LLM_CODE_MODULE = "llm_sort"
 LLM_CODE_FILE = f"/sandbox/{LLM_CODE_MODULE}.py"
 SORT_FUNCTION_NAME = "sort_algorithm"
 TEST_SUITE_FILE = "/sandbox/test_suite_data.json"
+
+# Helper function to send progress updates as JSON to stderr
+def send_progress(data: dict):
+    """Formats data as JSON and prints to stderr."""
+    try:
+        # Add a type field to distinguish progress messages easily
+        progress_message = {"type": "progress", "data": data}
+        print(json.dumps(progress_message), file=sys.stderr, flush=True)
+    except Exception as e:
+        # Fallback if JSON serialization fails for progress
+        print(json.dumps({"type": "progress", "data": {"error": f"Failed to serialize progress: {e}"}}), file=sys.stderr, flush=True)
+
 
 def run_all_benchmarks():
     """Loads suite, runs tests, aggregates, and returns results dict."""
@@ -83,16 +96,36 @@ def run_all_benchmarks():
             current_category_num += 1
             cat_stats = category_results[category]
             num_cases_in_cat = len(test_cases_in_category) # Get total cases for this category
-            print(f"--- Starting Category {current_category_num}/{total_categories}: '{category}' ({num_cases_in_cat} cases) ---", file=sys.stderr)
+            # Send progress update for category start
+            send_progress({
+                'status': 'Running',
+                'category': category,
+                'category_num': current_category_num,
+                'total_categories': total_categories,
+                'category_total_cases': num_cases_in_cat,
+                'message': f"Starting category '{category}'..."
+            })
+            # print(f"--- Starting Category {current_category_num}/{total_categories}: '{category}' ({num_cases_in_cat} cases) ---", file=sys.stderr) # Keep simple stderr log too
 
             # Use enumerate to get case number within category
             for i, test_case in enumerate(test_cases_in_category):
                 case_num_in_cat = i + 1
                 overall_total_cases += 1
                 cat_stats['case_count'] += 1
-                # Log start of case processing
                 input_repr = repr(test_case[:15]) + ('...' if len(test_case) > 15 else '')
-                print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {overall_total_cases}): Input={input_repr}", file=sys.stderr, end='') # Print without newline initially
+                # Send progress update for case start
+                send_progress({
+                    'status': 'Running',
+                    'category': category,
+                    'category_num': current_category_num,
+                    'total_categories': total_categories,
+                    'category_case_num': case_num_in_cat,
+                    'category_total_cases': num_cases_in_cat,
+                    'current_case': overall_total_cases, # Overall case number
+                    'input_snippet': input_repr,
+                    'message': f"Running case {case_num_in_cat}/{num_cases_in_cat}..."
+                })
+                # print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {overall_total_cases}): Input={input_repr}", file=sys.stderr, end='') # Keep simple stderr log too
                 llm_time_sec = None
                 baseline_time_sec = None
                 is_correct = False
@@ -125,20 +158,43 @@ def run_all_benchmarks():
                         cat_stats['llm_time_sec'] += llm_time_sec
                         overall_llm_runs_timed += 1
                         cat_stats['llm_runs_timed'] += 1
-                        print(" -> Correct", file=sys.stderr) # Append outcome to the initial print
+                        # print(" -> Correct", file=sys.stderr) # Keep simple stderr log too
+                        # Send progress update for case completion (Correct)
+                        send_progress({
+                            'status': 'Correct',
+                            'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                            'llm_time_ms': llm_time_sec * 1000 if llm_time_sec is not None else None,
+                            'baseline_time_ms': baseline_time_sec * 1000 if baseline_time_sec is not None else None,
+                            'output_snippet': repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
+                        })
                     else:
-                        # Log incorrectness details if needed for debugging wrapper
                         actual_repr = repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
                         expected_repr = repr(expected_output[:15]) + ('...' if len(expected_output) > 15 else '')
-                        print(f" -> INCORRECT (Expected: {expected_repr}, Got: {actual_repr})", file=sys.stderr)
-
+                        # print(f" -> INCORRECT (Expected: {expected_repr}, Got: {actual_repr})", file=sys.stderr) # Keep simple stderr log too
+                        # Send progress update for case completion (Incorrect)
+                        send_progress({
+                            'status': 'Incorrect',
+                            'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                            'llm_time_ms': llm_time_sec * 1000 if llm_time_sec is not None else None,
+                            'baseline_time_ms': baseline_time_sec * 1000 if baseline_time_sec is not None else None,
+                            'output_snippet': actual_repr,
+                            'expected_snippet': expected_repr
+                        })
 
                 except Exception as exec_err:
                     # Error during LLM execution or baseline sort for this case
-                    print(f" -> ERROR", file=sys.stderr) # Append outcome to the initial print
+                    # print(f" -> ERROR", file=sys.stderr) # Keep simple stderr log too
                     case_error = f"{type(exec_err).__name__}: {exec_err}\n{traceback.format_exc()}"
+                    input_snippet_for_error = repr(test_case[:20]) + ('...' if len(test_case) > 20 else '')
+                    # Send progress update for case completion (Error)
+                    send_progress({
+                        'status': 'Error',
+                        'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                        'input_snippet': input_snippet_for_error,
+                        'error': case_error
+                    })
                     cat_stats['errors'].append({
-                        'input_snippet': repr(test_case[:20]) + ('...' if len(test_case) > 20 else ''),
+                        'input_snippet': input_snippet_for_error,
                         'error': case_error
                     })
                     # Optional: Log error details if needed for debugging wrapper
@@ -186,21 +242,24 @@ def run_all_benchmarks():
 
 # --- Main execution block ---
 if __name__ == "__main__":
-    # Need importlib for dynamic loading
-    import importlib.util
+    # Moved importlib.util to top as it's needed by run_all_benchmarks
 
     final_results = run_all_benchmarks()
 
     # --- Print the final aggregated results as JSON to stdout ---
+    # Add a type field to distinguish the final result message
+    final_message = {"type": "result", "data": final_results}
     try:
-        print(json.dumps(final_results))
+        print(json.dumps(final_message)) # Print final result to stdout
     except TypeError as json_err:
-        # Fallback if results contain non-serializable data (shouldn't happen with current structure)
+        # Fallback if results contain non-serializable data
         fallback_error = f"FATAL: Could not serialize final results dictionary: {json_err}. Original error: {final_results.get('error')}"
-        print(json.dumps({'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}))
+        final_message = {"type": "result", "data": {'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
+        print(json.dumps(final_message)) # Print fallback final result to stdout
     except Exception as final_print_err:
          # Ultimate fallback for any other printing error
-         print(json.dumps({'error': f"FATAL: Error printing final JSON: {final_print_err}", 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}))
+         final_message = {"type": "result", "data": {'error': f"FATAL: Error printing final JSON: {final_print_err}", 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
+         print(json.dumps(final_message)) # Print ultimate fallback final result to stdout
 
-    # Exit explicitly - 0 if no critical error, 1 otherwise
+    # Exit explicitly - 0 if no critical error in the final_results dict, 1 otherwise
     sys.exit(1 if final_results.get('error') else 0)

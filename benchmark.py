@@ -290,48 +290,93 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            exec_error = None
 
            try:
-               # Use exec_run with stream=False, demux=False as we expect a single JSON output
-               # Set a timeout for the entire execution
-               exec_result = container.exec_run(
+               # Use exec_run with stream=True, demux=True to get separate stdout/stderr
+               exec_stream = container.exec_run(
                    cmd=exec_command,
-                   stream=False,
-                   demux=False,
+                   stream=True,
+                   demux=True, # Separate stdout (1) and stderr (2)
                    workdir=sandbox_dir,
-                   # Consider adding a timeout here if EXEC_TIMEOUT_SECONDS is defined
-                   # timeout=EXEC_TIMEOUT_SECONDS # This might not be directly supported, check docker-py docs
                )
 
-               exit_code = exec_result.exit_code
-               output_bytes = exec_result.output
+               stdout_acc = b""
+               stderr_buffer = b"" # Buffer for potentially incomplete stderr lines
+               exit_code = None # Will be determined after stream finishes
 
+               print("Streaming output from container...")
+               for stream_type, chunk in exec_stream:
+                   if chunk is None: # Skip empty chunks
+                       continue
+
+                   if stream_type == 1: # stdout (final result)
+                       stdout_acc += chunk
+                   elif stream_type == 2: # stderr (progress updates)
+                       stderr_buffer += chunk
+                       # Process complete lines from stderr buffer
+                       lines = stderr_buffer.split(b'\n')
+                       stderr_buffer = lines[-1] # Keep incomplete line in buffer
+                       for line_bytes in lines[:-1]:
+                           line_str = line_bytes.decode('utf-8', errors='replace').strip()
+                           if not line_str: continue # Skip empty lines
+                           try:
+                               progress_json = json.loads(line_str)
+                               if progress_json.get("type") == "progress" and progress_callback:
+                                   # Pass the inner 'data' dict to the callback
+                                   progress_callback(progress_json.get("data", {}))
+                               else:
+                                   # Log unexpected JSON or non-progress messages from stderr
+                                   print(f"DEBUG (stderr JSON): {line_str}")
+                           except json.JSONDecodeError:
+                               # Log non-JSON lines from stderr for debugging
+                               print(f"DEBUG (stderr raw): {line_str}")
+                           except Exception as cb_err:
+                               print(f"ERROR: Progress callback failed: {cb_err}")
+
+               # --- Stream finished, now inspect exit code and parse final result ---
+               exec_inspect = docker_client.api.exec_inspect(exec_stream.exec_id) # Use exec_id from stream object
+               exit_code = exec_inspect.get('ExitCode')
+
+               # Handle potential None exit code (retry logic might be needed again if observed)
+               if exit_code is None:
+                   print(f"WARNING: exec_inspect returned ExitCode=None immediately after stream finished. Inspect: {exec_inspect}")
+                   # Optionally add a small delay and retry inspect here if needed
+
+               # Process final stdout result
                if exit_code == 0:
                    try:
-                       output_str = output_bytes.decode('utf-8').strip()
-                       # Expecting a single JSON object containing all results
-                       container_results = json.loads(output_str)
-                       print("Successfully received and parsed results from container.")
-                       # Update host-side results based on container output
-                       results.update(container_results) # Overwrite defaults with container results
-                       # Check if the container reported an internal error
-                       if container_results.get('error'):
-                           exec_error = f"Container wrapper script reported an internal error: {container_results['error']}"
-                           results['error'] = exec_error # Ensure host result reflects this
-                   except json.JSONDecodeError as json_e:
-                       output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
-                       exec_error = f"Failed to decode JSON result from container (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
+                       output_str = stdout_acc.decode('utf-8').strip()
+                       if not output_str:
+                            raise ValueError("Container stdout was empty (Exit Code 0).")
+                       # Expecting JSON like {"type": "result", "data": {...}}
+                       final_message = json.loads(output_str)
+                       if final_message.get("type") == "result":
+                           container_results = final_message.get("data", {})
+                           print("Successfully received and parsed final result from container stdout.")
+                           results.update(container_results) # Update host results
+                           if container_results.get('error'):
+                               exec_error = f"Container wrapper script reported an internal error: {container_results['error']}"
+                               results['error'] = exec_error # Ensure host result reflects this
+                       else:
+                           raise ValueError(f"Unexpected JSON format in stdout: Missing 'type' or not 'result'. Content: {output_str[:200]}...")
+                   except (json.JSONDecodeError, ValueError) as json_e:
+                       output_snippet = stdout_acc.decode('utf-8', errors='replace')[:1000]
+                       exec_error = f"Failed to decode/parse final JSON result from container stdout (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
                        results['error'] = exec_error
                    except Exception as parse_e:
-                       output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
-                       exec_error = f"Unexpected error parsing container output (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
+                       output_snippet = stdout_acc.decode('utf-8', errors='replace')[:1000]
+                       exec_error = f"Unexpected error parsing container stdout (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
                        results['error'] = exec_error
-               else:
-                   # Execution failed
-                   output_snippet = output_bytes.decode('utf-8', errors='replace')[:1000]
-                   exec_error = f"Container exec wrapper exited with code {exit_code}. Output:\n---\n{output_snippet}\n---"
-                   results['error'] = exec_error # Set the error in the main results dict
+               elif exit_code is not None: # Execution failed (non-zero exit code)
+                   stderr_snippet = stderr_buffer.decode('utf-8', errors='replace')[:500] # Include final stderr buffer content
+                   stdout_snippet = stdout_acc.decode('utf-8', errors='replace')[:500]
+                   exec_error = f"Container exec wrapper exited with code {exit_code}. Stderr:\n---\n{stderr_snippet}\n---\nStdout:\n---\n{stdout_snippet}\n---"
+                   results['error'] = exec_error
+               else: # Exit code remained None (problem inspecting exec)
+                    exec_error = f"Failed to determine container exec exit code. Inspect result: {exec_inspect}"
+                    results['error'] = exec_error
+
 
            except (APIError, DockerConnectionError) as docker_exec_err:
-               exec_error = f"Docker API/Connection error during exec_run: {docker_exec_err}"
+               exec_error = f"Docker API/Connection error during exec stream: {docker_exec_err}"
                results['error'] = exec_error
            except Exception as host_exec_e:
                exec_error = f"Host error during container exec_run call: {host_exec_e}"
