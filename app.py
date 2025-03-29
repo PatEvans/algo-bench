@@ -2,8 +2,6 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 import database
 import benchmark
 import llm_interface # Import the missing module
-import database
-import benchmark
 import threading
 import uuid # For generating unique task IDs
 from collections import deque # For storing recent progress updates
