@@ -396,13 +396,29 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
 
                if exit_code == 0:
                    print("DEBUG BENCHMARK: Exit code is 0. Processing stdout...") # DEBUG ADDED
+                   output_str_raw = stdout_acc.decode('utf-8', errors='replace')
+                   # Define markers
+                   start_marker = "---WRAPPER_STDOUT_MARKER_BEFORE---"
+                   end_marker = "---WRAPPER_STDOUT_MARKER_AFTER---"
                    try:
-                       output_str = stdout_acc.decode('utf-8').strip()
-                       if not output_str:
-                            print("DEBUG BENCHMARK: stdout_acc decoded to an empty string.") # DEBUG ADDED
-                            raise ValueError("Container stdout was empty (Exit Code 0).")
-                       # Expecting JSON like {"type": "result", "data": {...}}
-                       final_message = json.loads(output_str)
+                       # Find markers
+                       start_index = output_str_raw.find(start_marker)
+                       end_index = output_str_raw.find(end_marker)
+
+                       if start_index == -1 or end_index == -1 or end_index <= start_index:
+                           print(f"DEBUG BENCHMARK: Markers not found or in wrong order in stdout.") # DEBUG ADDED
+                           raise ValueError(f"Could not find expected markers '{start_marker}' and '{end_marker}' in container stdout.")
+
+                       # Extract content between markers
+                       json_content_str = output_str_raw[start_index + len(start_marker):end_index].strip()
+                       print(f"DEBUG BENCHMARK: Extracted JSON content string (first 500 chars): {json_content_str[:500]}") # DEBUG ADDED
+
+                       if not json_content_str:
+                           print("DEBUG BENCHMARK: Extracted content between markers is empty.") # DEBUG ADDED
+                           raise ValueError("Container stdout between markers was empty (Exit Code 0).")
+
+                       # Parse the extracted JSON content
+                       final_message = json.loads(json_content_str)
                        if final_message.get("type") == "result":
                            container_results = final_message.get("data", {})
                            print("Successfully received and parsed final result from container stdout.")
@@ -411,18 +427,18 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                                exec_error = f"Container wrapper script reported an internal error: {container_results['error']}"
                                results['error'] = exec_error # Ensure host result reflects this
                        else:
-                           raise ValueError(f"Unexpected JSON format in stdout: Missing 'type' or not 'result'. Content: {output_str[:200]}...")
+                           raise ValueError(f"Unexpected JSON format in stdout: Missing 'type' or not 'result'. Content: {json_content_str[:200]}...")
                    except (json.JSONDecodeError, ValueError) as json_e:
-                       output_snippet = stdout_acc.decode('utf-8', errors='replace')[:1000]
+                       output_snippet = output_str_raw[:1000] # Show raw output in error
                        exec_error = f"Failed to decode/parse final JSON result from container stdout (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
                        results['error'] = exec_error
                    except Exception as parse_e:
-                       output_snippet = stdout_acc.decode('utf-8', errors='replace')[:1000]
+                       output_snippet = output_str_raw[:1000] # Show raw output in error
                        exec_error = f"Unexpected error parsing container stdout (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
                        results['error'] = exec_error
                elif exit_code is not None: # Execution failed (non-zero exit code)
                    stderr_snippet = stderr_buffer.decode('utf-8', errors='replace')[:500] # Include final stderr buffer content
-                   stdout_snippet = stdout_acc.decode('utf-8', errors='replace')[:500]
+                   stdout_snippet = stdout_acc.decode('utf-8', errors='replace')[:500] # Use the raw stdout here
                    exec_error = f"Container exec wrapper exited with code {exit_code}. Stderr:\n---\n{stderr_snippet}\n---\nStdout:\n---\n{stdout_snippet}\n---"
                    results['error'] = exec_error
                else: # Exit code remained None (problem inspecting exec)
