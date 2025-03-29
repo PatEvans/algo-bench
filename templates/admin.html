@@ -33,14 +33,7 @@
             </select>
         </div>
 
-        <div>
-            <label for="algorithm">Select Algorithm:</label>
-            <select name="algorithm" id="algorithm" required>
-                 {% for algo_option in algorithms %}
-                    <option value="{{ algo_option }}">{{ algo_option }}</option>
-                {% endfor %}
-            </select>
-        </div>
+        <!-- Algorithm selection removed -->
 
         <button type="submit">Run Benchmark</button>
     </form>

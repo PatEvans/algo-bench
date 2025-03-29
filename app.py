@@ -10,10 +10,10 @@ app = Flask(__name__)
 # Required for flash messages
 app.secret_key = 'super secret key' # Change this to a random secret key, maybe from env var
 
-# Define available LLMs and Algorithms (can be moved to config later)
+# Define available LLMs (can be moved to config later)
 PYTHON_SORTED_BENCHMARK = "Python sorted()"
 AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "dummy_llm"] # Add real LLM identifiers here
-AVAILABLE_ALGORITHMS = ["Bubble Sort", "Quick Sort", "Merge Sort", "Insertion Sort"]
+# AVAILABLE_ALGORITHMS removed as specific algorithms are no longer selected
 
 # --- Benchmark Status Tracking ---
 # Store status of running/completed benchmarks. Use a deque to limit memory usage for progress lists.
@@ -36,12 +36,16 @@ def index():
 @app.route('/admin')
 def admin():
     """Display the admin page to run benchmarks."""
-    return render_template('admin.html', llms=AVAILABLE_LLMS, algorithms=AVAILABLE_ALGORITHMS)
+    # Pass only LLMs to the template
+    return render_template('admin.html', llms=AVAILABLE_LLMS)
 
 
-def run_benchmark_background(task_id, llm_name, algorithm_name):
+# algorithm_name parameter removed
+def run_benchmark_background(task_id, llm_name):
     """Function to run benchmark in a separate thread and update status."""
-    print(f"Starting background benchmark task {task_id}: {llm_name} - {algorithm_name}")
+    # Determine the algorithm label based on the LLM type
+    algorithm_label = benchmark.GENERAL_ALGORITHM_NAME if llm_name != PYTHON_SORTED_BENCHMARK else benchmark.BASELINE_ALGORITHM_NAME
+    print(f"Starting background benchmark task {task_id}: {llm_name} - {algorithm_label}")
 
     def progress_callback(update_data):
         """Callback function passed to benchmark methods."""
@@ -59,10 +63,11 @@ def run_benchmark_background(task_id, llm_name, algorithm_name):
 
     # Initialize status
     with STATUS_LOCK:
+        # Use the determined algorithm_label in the status
         BENCHMARK_STATUS[task_id] = {
             'task_id': task_id,
             'llm': llm_name,
-            'algorithm': algorithm_name,
+            'algorithm': algorithm_label, # Use the determined label
             'status': 'Initializing',
             'start_time': time.time(),
             'end_time': None,
@@ -79,17 +84,11 @@ def run_benchmark_background(task_id, llm_name, algorithm_name):
         # database.init_db() # Already called at startup and potentially problematic here if DB file is locked
 
         if llm_name == PYTHON_SORTED_BENCHMARK:
-            # Run benchmark using Python's built-in sorted()
-            result = benchmark.run_python_sorted_benchmark(algorithm_name, progress_callback=progress_callback)
+            # Run benchmark using Python's built-in sorted() - no algorithm name needed
+            result = benchmark.run_python_sorted_benchmark(progress_callback=progress_callback)
         else:
-            # Run benchmark using LLM generation
-            # Note: run_single_benchmark needs modification to accept/pass the callback
-            # Let's modify run_single_benchmark first (missed in Step 1 planning)
-            # --- TEMPORARY PAUSE on app.py ---
-            # Need to edit benchmark.py again first.
-
-            # --- RESUME app.py after benchmark.py edit ---
-            result = benchmark.run_single_benchmark(llm_name, algorithm_name, progress_callback=progress_callback)
+            # Run benchmark using LLM generation - no algorithm name needed
+            result = benchmark.run_single_benchmark(llm_name, progress_callback=progress_callback)
 
 
         # Save final result to DB
@@ -106,20 +105,31 @@ def run_benchmark_background(task_id, llm_name, algorithm_name):
         print(f"Finished background benchmark task {task_id}: {llm_name} - {algorithm_name}")
 
     except Exception as e:
-        print(f"Error in background benchmark task {task_id} ({llm_name} - {algorithm_name}): {e}")
+        # Use algorithm_label in error message
+        print(f"Error in background benchmark task {task_id} ({llm_name} - {algorithm_label}): {e}")
         error_message = f"Benchmark execution failed: {e}"
         with STATUS_LOCK:
-            BENCHMARK_STATUS[task_id]['status'] = 'Error'
-            BENCHMARK_STATUS[task_id]['error'] = error_message
-            BENCHMARK_STATUS[task_id]['end_time'] = time.time()
-            BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+            # Ensure the status dict exists before updating
+            if task_id in BENCHMARK_STATUS:
+                BENCHMARK_STATUS[task_id]['status'] = 'Error'
+                BENCHMARK_STATUS[task_id]['error'] = error_message
+                BENCHMARK_STATUS[task_id]['end_time'] = time.time()
+                BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+            else:
+                # Should not happen ideally, but log if it does
+                print(f"Error: Task ID {task_id} not found in BENCHMARK_STATUS during exception handling.")
+
 
         # Optionally save error state to DB
         error_result = {
             'llm': llm_name,
-            'algorithm': algorithm_name,
+            'algorithm': algorithm_label, # Use the determined label
             'error': f"Benchmark execution failed: {e}",
             'correctness': None,
+            BENCHMARK_STATUS[task_id]['error'] = error_message
+            BENCHMARK_STATUS[task_id]['end_time'] = time.time()
+            BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+
             'avg_time_ms': None,
             'baseline_avg_time_ms': None,
             'performance_details': None, # Add placeholder
@@ -142,25 +152,26 @@ def run_benchmark():
     """Endpoint to trigger a new benchmark run."""
     # Get parameters from form
     llm_name = request.form.get('llm')
-    algorithm_name = request.form.get('algorithm')
+    # algorithm_name is no longer submitted by the form
 
     # Validate parameters
     if not llm_name or llm_name not in AVAILABLE_LLMS:
         flash(f"Invalid or missing LLM selected: {llm_name}", "error")
         return redirect(url_for('admin'))
-    if not algorithm_name or algorithm_name not in AVAILABLE_ALGORITHMS:
-        flash(f"Invalid or missing Algorithm selected: {algorithm_name}", "error")
-        return redirect(url_for('admin'))
+    # Algorithm validation removed
+
+    # Determine the algorithm label for the flash message
+    algorithm_label = benchmark.GENERAL_ALGORITHM_NAME if llm_name != PYTHON_SORTED_BENCHMARK else benchmark.BASELINE_ALGORITHM_NAME
 
     # Generate a unique ID for this benchmark task
     task_id = str(uuid.uuid4())
 
-    # Run benchmark in a background thread to avoid blocking the web request
-    thread = threading.Thread(target=run_benchmark_background, args=(task_id, llm_name, algorithm_name))
+    # Run benchmark in a background thread - pass only task_id and llm_name
+    thread = threading.Thread(target=run_benchmark_background, args=(task_id, llm_name))
     thread.daemon = True # Allow app to exit even if background threads are running
     thread.start()
 
-    flash(f"Benchmark task {task_id} started for {llm_name} - {algorithm_name}.", "info")
+    flash(f"Benchmark task {task_id} started for {llm_name} ({algorithm_label}).", "info")
     # Redirect to the progress page for this task
     return redirect(url_for('benchmark_progress', task_id=task_id))
 

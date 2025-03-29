@@ -130,7 +130,7 @@
                     console.log("Benchmark finished. Status:", data.status);
                     if(data.final_result) {
                         // Display final summary result nicely formatted
-                        let resultText = `LLM: ${data.llm}\nAlgorithm: ${data.algorithm}\n`;
+                        let resultText = `LLM: ${data.llm}\nBenchmark Type: ${data.algorithm}\n`; // Changed "Algorithm" to "Benchmark Type"
                         resultText += `Correctness: ${data.final_result.correctness !== null ? data.final_result.correctness.toFixed(2) + '%' : 'N/A'}\n`;
                         resultText += `Avg Time (LLM): ${data.final_result.avg_time_ms !== null ? data.final_result.avg_time_ms.toFixed(4) + ' ms' : 'N/A'}\n`;
                         resultText += `Avg Time (Baseline): ${data.final_result.baseline_avg_time_ms !== null ? data.final_result.baseline_avg_time_ms.toFixed(4) + ' ms' : 'N/A'}\n`;

@@ -20,11 +20,14 @@ from typing import Callable, Optional, Any # For type hinting the callback
 # Need a secure way to execute code, e.g., using restricted environments or sandboxing.
 # This is a critical security consideration. A simple `exec` is DANGEROUS.
 
-def create_sort_prompt(algorithm_name: str) -> str:
-    """Creates a prompt to ask an LLM for a specific sorting algorithm."""
-    return f"Generate a Python function named `sort_algorithm` that implements {algorithm_name}. The function should take a list of numbers as input and return a new sorted list."
+# Constant for the generic algorithm name
+GENERAL_ALGORITHM_NAME = "LLM General Sort"
 
-def generate_test_cases(size_small=10, size_medium=1000, size_large=100000, num_cases_per_type=2) -> list[list[int]]:
+def create_sort_prompt() -> str:
+    """Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm."""
+    return f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
+
+def generate_test_cases(size_small=10, size_medium=1000, size_large=100000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
     """
     Generates integer test cases based on specified patterns:
     - Randomized (within a range)
@@ -292,9 +295,12 @@ def evaluate_algorithm(generated_code: str, progress_callback: Optional[Callable
     return results
 
 
-def run_single_benchmark(llm_name: str, algorithm_name: str, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
-    """Runs a benchmark for a single LLM and algorithm, optionally reporting progress."""
-    print(f"Running benchmark for {llm_name} on {algorithm_name}...")
+# Note: algorithm_name parameter is removed as it's no longer selected by the user.
+# We use the constant GENERAL_ALGORITHM_NAME internally.
+def run_single_benchmark(llm_name: str, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
+    """Runs a benchmark for a single LLM generating a general sort algorithm, optionally reporting progress."""
+    algorithm_name = GENERAL_ALGORITHM_NAME # Use the constant label
+    print(f"Running benchmark for {llm_name} generating a {algorithm_name}...")
 
     # --- Callback for generation step ---
     if progress_callback:
@@ -302,13 +308,14 @@ def run_single_benchmark(llm_name: str, algorithm_name: str, progress_callback: 
             'status': 'Generating Code', 'category': 'Setup', 'current_case': 0, 'total_cases': None
         })
 
-    prompt = create_sort_prompt(algorithm_name)
+    prompt = create_sort_prompt() # Call updated prompt function without algorithm name
     generated_code = llm_interface.generate_code(llm_name, prompt)
 
     if not generated_code:
         error_msg = 'Failed to generate code'
         if progress_callback:
              progress_callback({'status': 'Error', 'error': error_msg, 'category': 'Setup'})
+        # Use the constant algorithm_name in the return dict
         return {'llm': llm_name, 'algorithm': algorithm_name, 'error': error_msg}
 
     # --- Callback for evaluation step start ---
@@ -340,21 +347,25 @@ def run_single_benchmark(llm_name: str, algorithm_name: str, progress_callback: 
     }
 
 
-def run_python_sorted_benchmark(algorithm_name: str, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
+# Constant for the baseline benchmark label
+BASELINE_ALGORITHM_NAME = "Python sorted() Baseline"
+
+# Note: algorithm_name parameter removed, using constant label instead.
+def run_python_sorted_benchmark(progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
     """
-    Runs a benchmark using Python's built-in sorted() function, optionally reporting progress.
+    Runs a benchmark using Python's built-in sorted() function as a baseline, optionally reporting progress.
 
     Args:
-        algorithm_name: The conceptual algorithm name (used for labeling, not execution).
         progress_callback: An optional function to call with progress updates.
 
     Returns:
         A dictionary containing benchmark results.
     """
-    print(f"Running Python sorted() benchmark (labeled as {algorithm_name})...")
+    algorithm_name = BASELINE_ALGORITHM_NAME # Use the constant label
+    print(f"Running {algorithm_name} benchmark...")
     results = {
         'llm': PYTHON_SORTED_BENCHMARK, # Note: This constant needs to be defined/imported if run standalone
-        'algorithm': algorithm_name,
+        'algorithm': algorithm_name, # Use the constant label
         'correctness': 100.0, # sorted() is assumed correct
         'avg_time_ms': None, # This is the baseline itself
         'baseline_avg_time_ms': None, # Will be calculated
@@ -462,11 +473,12 @@ def run_python_sorted_benchmark(algorithm_name: str, progress_callback: Optional
 PYTHON_SORTED_BENCHMARK = "Python sorted()" # Define locally for example usage
 
 if __name__ == '__main__':
-    result_llm = run_single_benchmark('dummy_llm', 'Bubble Sort')
+    # Example usage updated to reflect removal of algorithm_name parameter
+    result_llm = run_single_benchmark('dummy_llm')
     print("\nLLM Benchmark Result:\n", result_llm)
 
-    result_baseline = run_python_sorted_benchmark('Bubble Sort') # Label baseline run
+    result_baseline = run_python_sorted_benchmark() # Run baseline
     print("\nPython sorted() Benchmark Result:\n", result_baseline)
 
-    # result_quick = run_single_benchmark('dummy_llm', 'Quick Sort')
+    # result_quick = run_single_benchmark('dummy_llm') # Example if running another LLM test
     # print("\nBenchmark Result:\n", result_quick)
