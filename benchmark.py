@@ -395,18 +395,36 @@ if __name__ == "__main__":
            llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
            runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename}" # Container path for runner
 
+           # --- DEBUG: Verify host files before container start ---
+           print(f"DEBUG: Host temporary directory: {temp_dir}")
+           print(f"DEBUG: Host LLM code path: {llm_code_path_host}")
+           print(f"DEBUG: Host runner script path: {runner_script_path_host}")
+           # --- END DEBUG ---
+
            # Write the generated code and the runner script to the host temp directory
            with open(llm_code_path_host, 'w', encoding='utf-8') as f_llm_script:
                f_llm_script.write(generated_code)
            with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
                f_runner_script.write(exec_wrapper_code) # Write the wrapper code to its own file
 
+           # --- DEBUG: Check if files exist on host before mount ---
+           llm_exists = os.path.exists(llm_code_path_host)
+           runner_exists = os.path.exists(runner_script_path_host)
+           print(f"DEBUG: Host LLM code exists before run?: {llm_exists}")
+           print(f"DEBUG: Host runner script exists before run?: {runner_exists}")
+           if not llm_exists or not runner_exists:
+                print("ERROR: Script files not found on host before starting container!")
+                # Consider raising an error here if needed
+           # --- END DEBUG ---
+
            # Start the container once, keep it running
            print("Starting persistent Docker container...")
            container = docker_client.containers.run(
                image=DOCKER_IMAGE,
                command=["sleep", "infinity"], # Keep container alive
-                volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'ro'}}, # Mount code read-only
+                # --- Temporarily remove 'ro' mode for debugging mount ---
+                volumes={temp_dir: {'bind': sandbox_dir}}, # Mount code read-write for now
+                # volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'ro'}}, # Original read-only mount
                 working_dir=sandbox_dir,
                 mem_limit=CONTAINER_MEM_LIMIT,
                 cpu_shares=CONTAINER_CPU_SHARES,
