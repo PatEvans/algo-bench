@@ -340,8 +340,8 @@ if __name__ == "__main__":
     # Calculate total cases for progress reporting
     total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
     current_overall_case_num = 0
-    # Define a timeout for each Docker container run (e.g., 30 seconds)
-    DOCKER_TIMEOUT = 30.0 # Timeout in seconds
+    # Define a timeout for each Docker container run (increase for larger inputs/slower algorithms)
+    DOCKER_TIMEOUT = 120.0 # Timeout in seconds (Increased from 30)
     # Define the Docker image to use
     DOCKER_IMAGE = "python:3.10-slim" # Or choose another appropriate Python image
     # Define container resource limits (adjust as needed)
@@ -482,9 +482,9 @@ if __name__ == "__main__":
                         llm_error_str = f"Docker API error during wait: {wait_err}"
                         exit_code = -2 # Indicate API error during wait
                     except Exception as wait_timeout_err: # Catch potential timeout errors from requests lib used by docker-py
-                        # Check if the error message indicates a timeout
+                        # Check if the error message indicates a timeout (likely container execution timeout)
                         if 'read timed out' in str(wait_timeout_err).lower():
-                             llm_error_str = f"Container timed out after {DOCKER_TIMEOUT} seconds (wait operation)."
+                             llm_error_str = f"Container execution likely exceeded timeout of {DOCKER_TIMEOUT} seconds (wait operation timed out)."
                              exit_code = -3 # Indicate timeout
                              # Attempt to kill the container if it timed out
                              try: container.kill()
