@@ -229,12 +229,15 @@ OUTPUT_FILE = '/sandbox/output.json' # Standardized output file path within cont
 ERROR_FILE = '/sandbox/error.txt' # Standardized error file path within container
 
 if __name__ == "__main__":
-    exit_code = 0
-    # Keep original streams
+    # Keep original streams FIRST
     original_stdout = sys.stdout
     original_stderr = sys.stderr
+    print("--- Script started (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
+
+    exit_code = 0
 
     # Redirect Python's sys.stdout/stderr to capture potential prints/errors from LLM code
+    print("--- Redirecting streams (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
     captured_stdout = io.StringIO()
     captured_stderr = io.StringIO()
     sys.stdout = captured_stdout
@@ -271,7 +274,8 @@ if __name__ == "__main__":
         exit_code = 1 # Indicate failure
 
     finally:
-        # Restore original streams
+        print(f"--- Entering finally block. Initial exit_code: {exit_code} (Original stderr) ---", file=original_stderr, flush=True) # DEBUG
+        # Restore original streams FIRST in finally block
         sys.stdout = original_stdout
         sys.stderr = original_stderr
 
