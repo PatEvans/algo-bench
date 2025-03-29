@@ -166,8 +166,23 @@ def run_all_benchmarks():
                         overall_llm_runs_timed += 1
                         cat_stats['llm_runs_timed'] += 1
                         # print(" -> Correct", file=sys.stderr) # Keep simple stderr log too
-                        # --- Progress update for 'Correct' status removed as requested ---
-                        # send_progress({ ... }) # Removed
+                        # --- Send progress update for 'Correct' status ---
+                        actual_repr_correct = repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
+                        expected_repr_correct = repr(expected_output[:15]) + ('...' if len(expected_output) > 15 else '')
+                        send_progress({
+                            'status': 'Correct',
+                            'category': category,
+                            'category_case_num': case_num_in_cat,
+                            'category_total_cases': num_cases_in_cat,
+                            'current_case': current_overall_case_num,
+                            'total_cases': total_overall_cases,
+                            'llm_time_ms': llm_time_sec * 1000 if llm_time_sec is not None else None,
+                            'baseline_time_ms': baseline_time_sec * 1000 if baseline_time_sec is not None else None,
+                            'input_snippet': input_repr, # Use the already defined input repr
+                            'output_snippet': actual_repr_correct,
+                            'expected_snippet': expected_repr_correct, # Include expected for comparison if needed
+                            'message': f"Case {current_overall_case_num}/{total_overall_cases} Correct."
+                        })
                     else:
                         actual_repr = repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
                         expected_repr = repr(expected_output[:15]) + ('...' if len(expected_output) > 15 else '')
