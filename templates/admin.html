@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"> <!-- Added lang attribute -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,6 +12,8 @@
         button { padding: 10px 15px; cursor: pointer; }
         nav { margin-bottom: 20px; }
         nav a { margin-right: 15px; text-decoration: none; }
+        .error-message { color: red; font-weight: bold; margin-bottom: 15px; padding: 10px; border: 1px solid red; background-color: #ffebeb; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -21,6 +23,14 @@
     </nav>
 
     <h1>Run LLM Benchmark</h1>
+
+    <!-- Display Test Suite Load Error if it exists -->
+    {% if test_suite_error %}
+        <div class="error-message">
+            <strong>Error loading test suite:</strong> {{ test_suite_error }}<br>
+            Benchmarks cannot be run until this is resolved.
+        </div>
+    {% endif %}
 
     <form action="{{ url_for('run_benchmark') }}" method="post">
         <div>
@@ -35,7 +45,10 @@
 
         <!-- Algorithm selection removed -->
 
-        <button type="submit">Run Benchmark</button>
+        <button type="submit" {% if test_suite_error %}disabled{% endif %}>Run Benchmark</button>
+        {% if test_suite_error %}
+            <p><small>(Button disabled because the test suite failed to load)</small></p>
+        {% endif %}
     </form>
 
 </body>
