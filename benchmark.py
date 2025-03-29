@@ -340,7 +340,7 @@ def run_single_benchmark(llm_name: str, algorithm_name: str, progress_callback: 
     }
 
 
-def run_python_sorted_benchmark(algorithm_name: str) -> dict:
+def run_python_sorted_benchmark(algorithm_name: str, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
     """
     Runs a benchmark using Python's built-in sorted() function, optionally reporting progress.
 
