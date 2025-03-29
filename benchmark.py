@@ -412,6 +412,15 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        exec_inspect = docker_client.api.exec_inspect(exec_id)
                        exit_code = exec_inspect.get('ExitCode')
 
+                       # Handle cases where ExitCode might be None initially for very fast processes
+                       if exit_code is None:
+                           print(f"DEBUG: Initial exec_inspect returned ExitCode=None for exec_id={exec_id}. Retrying after short delay...")
+                           time.sleep(0.1) # Wait 100ms
+                           exec_inspect = docker_client.api.exec_inspect(exec_id)
+                           exit_code = exec_inspect.get('ExitCode')
+                           print(f"DEBUG: Retry exec_inspect result: ExitCode={exit_code}, Running={exec_inspect.get('Running')}")
+
+
                        # Decode and parse output bytes (similar logic as before)
                        if llm_error_str is None: # Only proceed if no socket error
                            output_str = "" # Initialize output_str
