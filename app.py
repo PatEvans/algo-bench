@@ -126,10 +126,7 @@ def run_benchmark_background(task_id, llm_name):
             'algorithm': algorithm_label, # Use the determined label
             'error': f"Benchmark execution failed: {e}",
             'correctness': None,
-            BENCHMARK_STATUS[task_id]['error'] = error_message
-            BENCHMARK_STATUS[task_id]['end_time'] = time.time()
-            BENCHMARK_STATUS[task_id]['last_update'] = time.time()
-
+            # Lines updating BENCHMARK_STATUS removed from here, handled above in STATUS_LOCK block
             'avg_time_ms': None,
             'baseline_avg_time_ms': None,
             'performance_details': None, # Add placeholder
