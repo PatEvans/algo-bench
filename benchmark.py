@@ -337,49 +337,22 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                # Iterate safely, checking for None from the generator
                # Note: exec_start returns a generator directly
                print(f"DEBUG BENCHMARK: Starting stream read loop for exec_id: {exec_id}") # DEBUG ADDED
-               for item in exec_stream_generator:
-                   if item is None:
-                       # This condition might still be relevant depending on Docker API behavior
-                       print(f"DEBUG BENCHMARK: Received None from exec_start stream generator (exec_id: {exec_id}). Assuming stream ended.") # DEBUG ADDED
-                       break # Exit the loop if None is received
+               # According to docker-py docs for exec_start(stream=True, demux=True),
+               # it yields tuples of (stdout_chunk, stderr_chunk).
+               for stdout_chunk, stderr_chunk in exec_stream_generator:
+                   # Log the raw chunks received
+                   # print(f"DEBUG BENCHMARK: Raw chunks received - stdout: {repr(stdout_chunk)}, stderr: {repr(stderr_chunk)}") # Optional: Very verbose
 
-                   # Log the raw item received from the generator
-                   print(f"DEBUG BENCHMARK: Raw item from generator: {repr(item)}") # DEBUG ADDED
+                   if stdout_chunk:
+                       chunk_repr = repr(stdout_chunk)
+                       print(f"DEBUG BENCHMARK: Received STDOUT chunk - Size: {len(stdout_chunk)}, Content (repr): {chunk_repr[:200]}{'...' if len(stdout_chunk) > 200 else ''}") # DEBUG ADDED
+                       stdout_acc += stdout_chunk
 
-                   # Check if item is a tuple of length 2 before unpacking
-                   if isinstance(item, tuple) and len(item) == 2:
-                       stream_type, chunk = item
-
-                       # Log the unpacked type and chunk content correctly
-                       try:
-                           chunk_repr = repr(chunk)
-                           print(f"DEBUG BENCHMARK: Unpacked item - Stream Type: {stream_type}, Chunk Size: {len(chunk) if chunk else 0}, Chunk Content (repr): {chunk_repr[:200]}{'...' if chunk and len(chunk) > 200 else ''}") # DEBUG ADDED
-                       except Exception as log_err:
-                           print(f"DEBUG BENCHMARK: Error logging unpacked chunk details: {log_err}") # DEBUG ADDED
-
-                       # Check if the chunk itself is None/empty
-                       if chunk is None:
-                           print("DEBUG BENCHMARK: Chunk is None, skipping.") # DEBUG ADDED
-                           continue
-
-                       if stream_type == 1: # stdout (final result)
-                           print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stdout_acc.") # DEBUG ADDED
-                           stdout_acc += chunk
-                       elif stream_type == 2: # stderr (progress updates)
-                           print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stderr_buffer.") # DEBUG ADDED
-                           stderr_buffer += chunk
-                           # Process complete lines from stderr buffer (existing logic below)
-                       else:
-                            # Log unexpected stream types
-                            print(f"DEBUG BENCHMARK: Received unexpected stream type: {stream_type}. Chunk: {repr(chunk)[:200]}") # DEBUG ADDED
-
-                   else:
-                       # Log if the item is not the expected tuple format
-                       print(f"WARNING/DEBUG: Received unexpected item format from generator: {repr(item)}") # DEBUG ADDED
-                       continue # Skip processing this unexpected item
-
-                   # --- Existing stderr processing logic ---
-                   if stream_type == 2 and chunk: # Only process stderr if stream_type is 2 and chunk is not None
+                   if stderr_chunk:
+                       chunk_repr = repr(stderr_chunk)
+                       print(f"DEBUG BENCHMARK: Received STDERR chunk - Size: {len(stderr_chunk)}, Content (repr): {chunk_repr[:200]}{'...' if len(stderr_chunk) > 200 else ''}") # DEBUG ADDED
+                       stderr_buffer += stderr_chunk
+                       # Process complete lines from stderr buffer
                        lines = stderr_buffer.split(b'\n')
                        stderr_buffer = lines[-1] # Keep incomplete line in buffer
                        for line_bytes in lines[:-1]:
@@ -398,6 +371,11 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                                print(f"DEBUG (stderr raw): {line_str}")
                            except Exception as cb_err:
                                print(f"ERROR: Progress callback failed: {cb_err}")
+
+                   # Check if both are None, which might indicate the end, although the loop should terminate naturally.
+                   if stdout_chunk is None and stderr_chunk is None:
+                       print(f"DEBUG BENCHMARK: Received (None, None) from stream generator (exec_id: {exec_id}). Assuming stream ended.") # DEBUG ADDED
+                       break # Exit loop if we get (None, None) explicitly
 
                # --- Stream finished, now inspect exit code using the saved exec_id ---
                print(f"DEBUG BENCHMARK: Stream finished for exec_id: {exec_id}. Inspecting exit code...") # DEBUG ADDED
