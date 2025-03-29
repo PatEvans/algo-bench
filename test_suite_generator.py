@@ -3,7 +3,6 @@ Module for generating and managing benchmark test suites.
 """
 
 import json
-import os
 import random
 from collections import defaultdict
 

@@ -6,9 +6,10 @@
 
 import sys
 import json
+import sys
+import json
 import time
 import traceback
-import importlib.util
 import io
 import os # Need os module for file existence check
 
@@ -43,11 +44,13 @@ def load_and_run_sort():
                 sandbox_contents = os.listdir('/sandbox')
                 dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
             except Exception as list_e:
-                dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-            raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
-        # --- End check ---
+               dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
+           raise FileNotFoundError(
+               f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}"
+           )
+       # --- End check ---
 
-        # Import the module directly (should work if workdir=/sandbox)
+       # Import the module directly (should work if workdir=/sandbox)
         try:
             import llm_sort
         except ModuleNotFoundError:
@@ -124,12 +127,19 @@ def load_and_run_sort():
                 final_output_json = json.dumps(fallback_result)
             except Exception as fallback_json_err:
                 # Very unlikely, but catch errors serializing the fallback itself
-                print(f"ERROR: JSON serialization failed even for fallback result: {fallback_json_err}", file=sys.stderr)
-                # Construct a minimal error JSON string manually
-                final_output_json = f'{{"output": null, "error": "FATAL: Could not serialize execution results. Original error hint: {repr(result.get(\\"error\\"))}. Serialization error: {repr(str(fallback_json_err))}", "stdout": null, "stderr": null, "exec_time_ms": {result.get("exec_time_ms", "null")}}}'
+               print(f"ERROR: JSON serialization failed even for fallback result: {fallback_json_err}", file=sys.stderr)
+               # Construct a minimal error JSON string manually
+               error_hint = repr(result.get("error"))
+               ser_error = repr(str(fallback_json_err))
+               exec_time = result.get("exec_time_ms", "null")
+               final_output_json = (
+                   f'{{"output": null, "error": "FATAL: Could not serialize execution results. '
+                   f'Original error hint: {error_hint}. Serialization error: {ser_error}", '
+                   f'"stdout": null, "stderr": null, "exec_time_ms": {exec_time}}}'
+               )
 
-        # Print the determined JSON output (either primary, fallback, or minimal error)
-        print(final_output_json)
+       # Print the determined JSON output (either primary, fallback, or minimal error)
+       print(final_output_json)
 
 
 # --- Run the function ---

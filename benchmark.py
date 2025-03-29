@@ -8,14 +8,14 @@ Handles:
 """
 
 import time
-import llm_interface
 import json
 import tempfile # For creating temporary files AND directories
 import os # For file path operations
+import random # Moved import to top level
 from collections import defaultdict
-from typing import Callable, Optional, Any # For type hinting the callback
+from typing import Callable, Optional # For type hinting the callback (Removed Any)
 import docker # For Docker interaction
-from docker.errors import APIError, ImageNotFound, ContainerError # Specific Docker errors
+from docker.errors import APIError, ImageNotFound # Specific Docker errors (Removed ContainerError)
 from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
 from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
 import tarfile # To create tar archives for copying into container
@@ -26,6 +26,7 @@ import socket # For socket operations with exec_run
 import test_suite_generator
 
 # Using Docker containers provides better isolation than subprocess.
+# Moved import random to top level
 
 # Constant for the generic algorithm name
 GENERAL_ALGORITHM_NAME = "LLM General Sort"
@@ -288,7 +289,9 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                    try:
                        ls_cmd = ["ls", "-l", sandbox_dir]
                        ls_result = container.exec_run(cmd=ls_cmd, stream=False, demux=False)
-                       ls_output = ls_result.output.decode('utf-8', errors='replace').strip() if ls_result.output else "(no output)"
+                       ls_output = "(no output)"
+                       if ls_result.output:
+                           ls_output = ls_result.output.decode('utf-8', errors='replace').strip()
                        print(f"DEBUG: Contents of {sandbox_dir} before exec: Exit={ls_result.exit_code}\n{ls_output}")
                    except Exception as ls_e:
                        print(f"DEBUG: Error listing {sandbox_dir}: {ls_e}")
@@ -358,11 +361,13 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
 
                        # Decode and parse output bytes (similar logic as before)
                        if llm_error_str is None: # Only proceed if no socket error
+                           output_str = "" # Initialize output_str
                            try:
                                output_str = output_bytes.decode('utf-8', errors='replace').strip()
                            except Exception as decode_err:
-                               llm_error_str = f"Host failed to decode exec output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
-                               output_str = ""
+                               raw_bytes_repr = repr(output_bytes[:200])
+                               llm_error_str = (f"Host failed to decode exec output: {decode_err}. "
+                                                f"Raw bytes: {raw_bytes_repr}")
 
                            if output_str and llm_error_str is None:
                                try:
@@ -389,33 +394,44 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        elif parsed_result is None:
                            # Should not happen if exit code is 0 and no parsing error occurred, but check defensively
                            llm_error_str = "Exec wrapper exited code 0 but host failed to parse JSON result."
-                           if output_str: llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
+                           if output_str:
+                               output_snippet = output_str[:1000]
+                               llm_error_str += f" Raw output:\n---\n{output_snippet}\n---"
                        elif parsed_result.get('error'):
                            # Exit code 0, but the script internally caught an error
-                           llm_error_str = f"Exec wrapper reported internal error:\n---\n{parsed_result['error']}\n---"
+                           internal_error = parsed_result['error']
+                           llm_error_str = f"Exec wrapper reported internal error:\n---\n{internal_error}\n---"
                        else:
                            # --- Success Case ---
                            actual_output = parsed_result.get('output')
                            current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
 
                            if actual_output == expected_output:
-                                 is_correct = True
-                                 overall_correct_count += 1
-                                 cat_stats['correct_count'] += 1
-                                 if current_llm_time_ms is not None:
-                                     overall_llm_time += (current_llm_time_ms / 1000.0) # Convert ms to seconds for aggregation
-                                     cat_stats['llm_time'] += (current_llm_time_ms / 1000.0)
-                                     overall_llm_runs_timed += 1
-                                     cat_stats['llm_runs_timed'] += 1
-                                 progress_data['status'] = 'Correct'
+                               is_correct = True
+                               overall_correct_count += 1
+                               cat_stats['correct_count'] += 1
+                               if current_llm_time_ms is not None:
+                                   # Convert ms to seconds for aggregation
+                                   time_sec = current_llm_time_ms / 1000.0
+                                   overall_llm_time += time_sec
+                                   cat_stats['llm_time'] += time_sec
+                                   overall_llm_runs_timed += 1
+                                   cat_stats['llm_runs_timed'] += 1
+                               progress_data['status'] = 'Correct'
                            else:
-                                 # Log incorrect sort
-                                 actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
-                                 expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
-                                 test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                                 print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
-                                 progress_data['status'] = 'Incorrect'
-                                 progress_data['output_snippet'] = actual_repr
+                               # Log incorrect sort
+                               actual_repr = repr(actual_output)
+                               if isinstance(actual_output, list) and len(actual_output) > 20:
+                                   actual_repr = repr(actual_output[:20]) + '...'
+                               expected_repr = repr(expected_output)
+                               if len(expected_output) > 20:
+                                   expected_repr = repr(expected_output[:20]) + '...'
+                               test_repr = repr(test_case)
+                               if len(test_case) > 20:
+                                   test_repr = repr(test_case[:20]) + '...'
+                               print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
+                               progress_data['status'] = 'Incorrect'
+                               progress_data['output_snippet'] = actual_repr
                                  # Optionally capture the incorrect output in llm_error_str for reporting?
                                  # llm_error_str = f"Incorrect output. Expected: {expected_repr}, Got: {actual_repr}"
 
@@ -449,7 +465,9 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        overall_baseline_time += current_baseline_time
                        cat_stats['baseline_time'] += current_baseline_time
                    except Exception as e:
-                       test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                       test_repr = repr(test_case)
+                       if len(test_case) > 20:
+                           test_repr = repr(test_case[:20]) + '...'
                        print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
                        # Decide how to handle baseline errors (e.g., skip timing for this case?)
 
@@ -491,14 +509,23 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         if overall_llm_runs_timed > 0: # Average LLM time only over correctly sorted cases
             results['avg_time_ms'] = (overall_llm_time / overall_llm_runs_timed) * 1000
 
-        # Per-category results
-        for category, stats in category_results.items():
-            cat_correctness = (stats['correct_count'] / stats['case_count']) * 100 if stats['case_count'] > 0 else 0.0
-            cat_avg_llm_time = (stats['llm_time'] / stats['llm_runs_timed']) * 1000 if stats['llm_runs_timed'] > 0 else None
-            cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
-            results['performance_details'][category] = {
-                'correctness': cat_correctness,
-                'avg_time_ms': cat_avg_llm_time, # Note: Includes subprocess overhead
+       # Per-category results
+       for category, stats in category_results.items():
+           cat_correctness = 0.0
+           if stats['case_count'] > 0:
+               cat_correctness = (stats['correct_count'] / stats['case_count']) * 100
+
+           cat_avg_llm_time = None
+           if stats['llm_runs_timed'] > 0:
+               cat_avg_llm_time = (stats['llm_time'] / stats['llm_runs_timed']) * 1000
+
+           cat_avg_baseline_time = None
+           if stats['case_count'] > 0:
+               cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000
+
+           results['performance_details'][category] = {
+               'correctness': cat_correctness,
+               'avg_time_ms': cat_avg_llm_time, # Note: Includes container exec overhead
                 'baseline_avg_time_ms': cat_avg_baseline_time,
                 'count': stats['case_count']
             }
@@ -615,15 +642,15 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
                     'current_case': current_overall_case_num,
                     'total_cases': total_overall_cases_calculated,
                     'category': category,
-                    'category_case_num': i + 1,
-                    'category_total_cases': num_cases_in_category,
-                    'status': 'Running',
-                    'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                    # Calculate the expected output snippet for baseline
-                    'output_snippet': repr(sorted(test_case)[:10]) + ('...' if len(test_case) > 10 else ''),
-                    'error': None
-                }
-                # Report start of case processing (optional for baseline, but consistent)
+                   'category_case_num': i + 1,
+                   'category_total_cases': num_cases_in_category,
+                   'status': 'Running',
+                   'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
+                   # Calculate the expected output snippet for baseline
+                   'output_snippet': repr(sorted(test_case)[:10]) + ('...' if len(test_case) > 10 else ''),
+                   'error': None
+               }
+               # Report start of case processing (optional for baseline, but consistent)
                 # if progress_callback: progress_callback(progress_data)
 
                 baseline_input = list(test_case)
@@ -653,12 +680,14 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
              results['avg_time_ms'] = 0.0
              results['baseline_avg_time_ms'] = 0.0
 
-        # Per-category results
-        for category, stats in category_results.items():
-            cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
-            results['performance_details'][category] = {
-                'correctness': 100.0, # Assumed correct
-                'avg_time_ms': cat_avg_baseline_time, # This is the baseline time for this category
+       # Per-category results
+       for category, stats in category_results.items():
+           cat_avg_baseline_time = None
+           if stats['case_count'] > 0:
+               cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000
+           results['performance_details'][category] = {
+               'correctness': 100.0, # Assumed correct
+               'avg_time_ms': cat_avg_baseline_time, # This is the baseline time for this category
                 'baseline_avg_time_ms': cat_avg_baseline_time,
                 'count': stats['case_count']
             }
