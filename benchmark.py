@@ -449,23 +449,41 @@ if __name__ == "__main__":
                     with open(input_path_host, 'w', encoding='utf-8') as f_input:
                         f_input.write(input_json)
 
-                    # Add a small delay before starting the container (potential workaround for FS propagation)
-                    time.sleep(0.1) # Sleep for 100ms
+                    # Removed host-side sleep; waiting logic moved into container command
 
                     # 2. Run Docker container
                     llm_start_time = time.perf_counter()
 
-                    # Command to check for script existence before running
-                    container_command = [
-                        "sh",
-                        "-c",
-                        f"test -f {script_path_cont} && python {script_path_cont} || (echo '--- ERROR: {script_path_cont} not found or not a file in container! ---' >&2; exit 2)"
-                    ]
+                    # Command with a loop to wait for the script file to appear in the volume mount
+                    wait_timeout_seconds = 5 # How long to wait for the script file inside the container
+                    wait_command = f"""
+                    timeout_seconds={wait_timeout_seconds}
+                    start_time=$(date +%s)
+                    echo '--- Container waiting for {script_path_cont}... ---' >&2
+                    while true; do
+                      current_time=$(date +%s)
+                      elapsed_time=$((current_time - start_time))
+
+                      if [ -f "{script_path_cont}" ]; then
+                        echo '--- Script file found. Executing python {script_path_cont}... ---' >&2
+                        python "{script_path_cont}" # Execute the script
+                        exit $? # Exit with the python script's exit code
+                      fi
+
+                      if [ $elapsed_time -ge $timeout_seconds ]; then
+                        echo '--- ERROR: Timeout ({timeout_seconds}s) waiting for {script_path_cont} in container! ---' >&2
+                        exit 124 # Standard timeout exit code
+                      fi
+
+                      sleep 0.05 # Wait briefly before next check (reduced from 0.1)
+                    done
+                    """
+                    container_command = ["sh", "-c", wait_command]
+
 
                     container = docker_client.containers.run(
                         image=DOCKER_IMAGE,
-                        # command=["python", script_path_cont], # Original command
-                        command=container_command, # Use the wrapper command
+                        command=container_command, # Use the wait-loop command
                         volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'rw'}}, # Mount RW for output/error files
                         working_dir=sandbox_dir,
                         stdout=False, # Don't capture stdout directly, use files
