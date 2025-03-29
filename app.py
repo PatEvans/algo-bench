@@ -102,7 +102,8 @@ def run_benchmark_background(task_id, llm_name):
             BENCHMARK_STATUS[task_id]['error'] = result.get('error') # Store potential eval errors
             BENCHMARK_STATUS[task_id]['last_update'] = time.time()
 
-        print(f"Finished background benchmark task {task_id}: {llm_name} - {algorithm_name}")
+        # Use algorithm_label in the finished message
+        print(f"Finished background benchmark task {task_id}: {llm_name} - {algorithm_label}")
 
     except Exception as e:
         # Use algorithm_label in error message
