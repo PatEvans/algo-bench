@@ -139,21 +139,25 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
     # Initialize Docker client
     docker_client = None
     try:
+        # Signal start of evaluation process
+        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Initializing evaluation environment...'})
+
         docker_client = docker.from_env(timeout=10)
         docker_client.ping()
         print("Successfully connected to Docker daemon.")
-        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Docker client initialized.'})
+        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Docker client connected.'}) # Changed message
         # Ensure image exists
         try:
             docker_client.images.get(DOCKER_IMAGE)
             print(f"Docker image {DOCKER_IMAGE} found locally.")
-            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image {DOCKER_IMAGE} found.'})
+            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image ready ({DOCKER_IMAGE}).'}) # Changed message
         except ImageNotFound:
             print(f"Pulling Docker image: {DOCKER_IMAGE}...")
+            # Keep this message as pulling can take time
             if progress_callback: progress_callback({'status': 'Setup', 'message': f'Pulling Docker image {DOCKER_IMAGE}...'})
             docker_client.images.pull(DOCKER_IMAGE)
             print(f"Docker image {DOCKER_IMAGE} pulled.")
-            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image {DOCKER_IMAGE} pulled.'})
+            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image pulled ({DOCKER_IMAGE}).'}) # Changed message
         print(f"Using Docker image: {DOCKER_IMAGE}")
     except (DockerConnectionError, APIError, Exception) as e:
         results['error'] = f"Docker initialization failed: {e}. Is Docker running?"
@@ -255,7 +259,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Ensure container is stopped and removed at the end
            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
            print(f"Container {container.short_id} started.")
-           if progress_callback: progress_callback({'status': 'Setup', 'message': f'Container {container.short_id} started.'})
+           if progress_callback: progress_callback({'status': 'Setup', 'message': f'Container started ({container.short_id}).'}) # Changed message
 
            # --- Create sandbox directory inside container ---
            # Although working_dir is set, explicitly create it for clarity and put_archive target
@@ -278,7 +282,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Copy the archive to the container
            container.put_archive(path=sandbox_dir, data=tar_stream)
            print("Files copied.")
-           if progress_callback: progress_callback({'status': 'Setup', 'message': 'Files copied to container.'})
+           if progress_callback: progress_callback({'status': 'Setup', 'message': 'Benchmark files copied to container.'}) # Changed message
 
            # Optional: Short delay after copy might still be beneficial? Unlikely needed now.
            # time.sleep(0.1)
