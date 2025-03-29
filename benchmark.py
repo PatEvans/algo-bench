@@ -20,6 +20,8 @@ import time # Re-importing for clarity, used within functions
 import random # Re-importing for clarity, used within functions
 import llm_interface # Re-importing for clarity, used within functions
 from typing import Callable, Optional, Any # For type hinting the callback
+import io # To capture stdout within the subprocess
+import contextlib # To redirect stdout within the subprocess
 
 # Need a secure way to execute code, e.g., using restricted environments or sandboxing.
 # This is a critical security consideration. A simple `exec` is DANGEROUS.
@@ -204,20 +206,58 @@ import json
     script_boilerplate_footer = """
 # --- End of LLM Generated Code ---
 
+import sys
+import json
+import io # Ensure io is imported here as well for the subprocess context
+import contextlib # Ensure contextlib is imported here as well
+
 if __name__ == "__main__":
     exit_code = 0
+    original_stdout = sys.stdout # Keep original stdout
+    captured_stdout = io.StringIO() # Capture stray prints
+
     try:
         input_data_json = sys.stdin.read()
         input_list = json.loads(input_data_json)
-        # Check if sort_algorithm function exists before calling
+
         if 'sort_algorithm' in locals() and callable(sort_algorithm):
-            output_list = sort_algorithm(input_list)
-            print(json.dumps(output_list)) # Output result as JSON to stdout
+            output_list = None
+            # Redirect stdout to capture stray prints from LLM code execution
+            with contextlib.redirect_stdout(captured_stdout):
+                output_list = sort_algorithm(input_list) # Call the LLM function
+
+            # Print the *actual* result to the *original* stdout
+            if output_list is not None:
+                 print(json.dumps(output_list), file=original_stdout)
+            else:
+                 # Handle case where sort_algorithm might not return anything
+                 # or failed internally without raising an exception caught below.
+                 # We might want to print an empty list or raise an error.
+                 # For now, let's print null to indicate no valid output.
+                 print(json.dumps(None), file=original_stdout)
+
+
+            # Check if anything was captured (stray prints) and print to stderr as a warning
+            stray_prints = captured_stdout.getvalue()
+            if stray_prints:
+                print(f"Warning: Generated code produced unexpected stdout during execution:\n---\n{stray_prints}\n---", file=sys.stderr)
+
         else:
              raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
+
     except Exception as e:
-        print(f"Error in generated script execution: {e}", file=sys.stderr) # Report errors to stderr
+        # Print exception details to stderr
+        print(f"Error in generated script execution: {e}", file=sys.stderr)
+        # Also print any captured output to stderr for debugging
+        stray_prints = captured_stdout.getvalue()
+        if stray_prints:
+            print(f"Captured stdout before error:\n---\n{stray_prints}\n---", file=sys.stderr)
         exit_code = 1 # Indicate failure
+    finally:
+        # Ensure sys.exit is called outside the try/except if needed,
+        # but current structure seems okay as exit_code is set.
+        pass
+
     sys.exit(exit_code)
 """
 
