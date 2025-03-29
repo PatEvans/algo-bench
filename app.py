@@ -212,10 +212,9 @@ def run_benchmark_background(task_id, llm_name):
             )
 
         # --- Save final result to DB ---
-        # Ensure the result dict includes the generated code and algorithm label
+        # Ensure the result dict includes the algorithm label
         if result:
-            if generated_code_for_llm:
-                 result['generated_code'] = generated_code_for_llm
+            # generated_code is already included in the result dict from run_single_benchmark
             # Ensure algorithm label is in the result dict before saving
             result['algorithm'] = algorithm_label # Add/overwrite algorithm label
 
