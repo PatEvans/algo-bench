@@ -391,11 +391,11 @@ if __name__ == "__main__":
                 auto_remove=False, # We need to manage removal manually after loop
                 # Security options
                 # read_only=True, # Root filesystem read-only (volume is separate)
-                # network_mode='none', # Disable networking
-            )
-            # Ensure container is stopped and removed at the end
-            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
-            print(f"Container {container.short_id} started.")
+               # network_mode='none', # Disable networking
+           )
+           # Ensure container is stopped and removed at the end
+           stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
+           print(f"Container {container.short_id} started.")
 
             # Give container a moment to stabilize (optional, usually not needed for sleep infinity)
             # time.sleep(1)
