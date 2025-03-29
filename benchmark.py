@@ -328,6 +328,10 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        _sock = docker_client.api.exec_start(exec_id, socket=True)
                        _sock_low_level = _sock._sock # Get the underlying socket
 
+                       # Define and set socket timeout
+                       SOCKET_TIMEOUT = 120.0 # seconds - Adjust if needed for very large cases
+                       _sock_low_level.settimeout(SOCKET_TIMEOUT)
+
                        output_bytes = b""
                        parsed_result = None
 
