@@ -48,7 +48,7 @@ def sort_algorithm(arr):
             break
     return new_arr
 """
-    elif llm_name == "Gemini 1.5 Pro":
+    elif llm_name == "Gemini 2.5 Pro Exp":
         if genai is None:
             print("Error: google.generativeai library not installed. Run 'pip install google-generativeai'")
             return None
