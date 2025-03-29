@@ -11,20 +11,24 @@ import time
 import random
 import llm_interface
 import json
-import subprocess # For running the generated code in a separate process
+# import subprocess # No longer needed for execution
 import sys # To get the current Python executable path
-import tempfile # For creating temporary files
+import tempfile # For creating temporary files AND directories
 import os # For file path operations
+import shutil # For removing temp dirs if needed (though tempfile handles it)
 from collections import defaultdict
 import time # Re-importing for clarity, used within functions
 import random # Re-importing for clarity, used within functions
 import llm_interface # Re-importing for clarity, used within functions
 from typing import Callable, Optional, Any # For type hinting the callback
-import io # To capture stdout within the subprocess
-import contextlib # To redirect stdout within the subprocess
+import io # To capture stdout within the subprocess script
+# import contextlib # No longer needed for host-side redirection
+import docker # For Docker interaction
+from docker.errors import APIError, ImageNotFound, ContainerError # Specific Docker errors
+from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
+from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
 
-# Need a secure way to execute code, e.g., using restricted environments or sandboxing.
-# This is a critical security consideration. A simple `exec` is DANGEROUS.
+# Using Docker containers provides better isolation than subprocess.
 
 # Constant for the generic algorithm name
 GENERAL_ALGORITHM_NAME = "LLM General Sort"
@@ -209,6 +213,8 @@ import json
 
 # --- Start of LLM Generated Code ---
 """
+    # Modified footer to read input from a file inside the container (/sandbox/input.json)
+    # and write JSON result to stdout, errors/prints to stderr.
     script_boilerplate_footer = """
 # --- End of LLM Generated Code ---
 
@@ -216,7 +222,11 @@ import sys
 import json
 import io
 import traceback # For better error reporting
-# No need for os module just for writing output anymore
+import os # Need os to check for input file
+
+INPUT_FILE = '/sandbox/input.json' # Standardized input file path within container
+OUTPUT_FILE = '/sandbox/output.json' # Standardized output file path within container
+ERROR_FILE = '/sandbox/error.txt' # Standardized error file path within container
 
 if __name__ == "__main__":
     exit_code = 0
@@ -224,48 +234,80 @@ if __name__ == "__main__":
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
-    # Redirect Python's sys.stdout to capture potential prints from LLM code
+    # Redirect Python's sys.stdout/stderr to capture potential prints/errors from LLM code
     captured_stdout = io.StringIO()
+    captured_stderr = io.StringIO()
     sys.stdout = captured_stdout
-    # Keep sys.stderr pointing to the original stderr stream
+    sys.stderr = captured_stderr
+
+    final_output_json = None
+    error_message = None
 
     try:
-        input_data_json = sys.stdin.read()
+        # Read input from the mounted file instead of stdin
+        if not os.path.exists(INPUT_FILE):
+             raise FileNotFoundError(f"Input file {INPUT_FILE} not found in container.")
+
+        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+             input_data_json = f.read()
+
         input_list = json.loads(input_data_json)
 
         if 'sort_algorithm' in locals() and callable(sort_algorithm):
-            # Call the LLM function. Any prints inside it will go to captured_stdout.
+            # Call the LLM function. Any prints/errors inside it will go to captured streams.
             output_list = sort_algorithm(input_list)
 
             # Serialize the actual result to JSON
-            output_json = json.dumps(output_list)
-
-            # Print the JSON result *directly* to the original standard output stream
-            print(output_json, file=original_stdout) # Use the saved original stdout
+            final_output_json = json.dumps(output_list)
 
         else:
-             # This error should go to stderr
-             print("Error: Function 'sort_algorithm' not found or not callable in generated code.", file=original_stderr)
-             exit_code = 1 # Indicate failure
+             # This error should be captured
+             raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
 
     except Exception as e:
-        # Errors raised here should print their traceback to the original stderr.
-        print(f"Error in generated script execution:", file=original_stderr)
-        traceback.print_exc(file=original_stderr) # Print full traceback to stderr
+        # Capture any exception during execution
+        error_message = f"Error in generated script execution: {type(e).__name__}: {e}\\n"
+        error_message += traceback.format_exc()
         exit_code = 1 # Indicate failure
+
     finally:
-        # Restore stdout just in case (though process is exiting)
+        # Restore original streams
         sys.stdout = original_stdout
+        sys.stderr = original_stderr
 
-        # Process the captured stdout (stray prints) and send to stderr
+        # Combine captured output/error with any explicit error message
         stray_prints = captured_stdout.getvalue()
+        internal_errors = captured_stderr.getvalue()
+        if error_message is None: # If no major exception occurred
+             error_message = ""
         if stray_prints:
-            print("\\n--- Captured Stdout (potential stray prints from LLM code) ---", file=original_stderr)
-            print(stray_prints, file=original_stderr)
-            print("--- End Captured Stdout ---", file=original_stderr)
+            error_message += "\\n--- Captured Stdout (potential stray prints) ---\\n" + stray_prints
+        if internal_errors:
+             error_message += "\\n--- Captured Stderr (potential internal errors) ---\\n" + internal_errors
 
-        # Close the StringIO object
+        # Write the final JSON output to the designated file
+        if final_output_json is not None:
+             try:
+                 with open(OUTPUT_FILE, 'w', encoding='utf-8') as f_out:
+                     f_out.write(final_output_json)
+             except Exception as write_e:
+                 error_message += f"\\nCRITICAL: Failed to write output JSON to {OUTPUT_FILE}: {write_e}"
+                 exit_code = 2 # Different exit code for I/O failure
+
+        # Write any accumulated errors/prints to the error file
+        if error_message and error_message.strip(): # Check if there's anything to write
+             try:
+                 with open(ERROR_FILE, 'w', encoding='utf-8') as f_err:
+                     f_err.write(error_message.strip())
+             except Exception as write_e:
+                 # If we can't even write the error, print to original stderr as last resort
+                 print(f"CRITICAL: Failed to write error log to {ERROR_FILE}: {write_e}", file=sys.stderr)
+                 print(f"Original error was:\n{error_message}", file=sys.stderr)
+                 exit_code = 3 # Yet another exit code
+
+        # Close StringIO objects
         captured_stdout.close()
+        captured_stderr.close()
 
     sys.exit(exit_code)
 """
@@ -273,9 +315,43 @@ if __name__ == "__main__":
     # Calculate total cases for progress reporting
     total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
     current_overall_case_num = 0
-    # Define a timeout for each subprocess run (e.g., 30 seconds)
-    # Adjust as needed based on expected execution time and test case sizes
-    SUBPROCESS_TIMEOUT = 30.0
+    # Define a timeout for each Docker container run (e.g., 30 seconds)
+    DOCKER_TIMEOUT = 30.0 # Timeout in seconds
+    # Define the Docker image to use
+    DOCKER_IMAGE = "python:3.10-slim" # Or choose another appropriate Python image
+    # Define container resource limits (adjust as needed)
+    CONTAINER_MEM_LIMIT = "256m" # e.g., 256 MB memory limit
+    CONTAINER_CPU_SHARES = 512 # Relative CPU weight (default 1024)
+
+    # Initialize Docker client (do this once outside the loop)
+    try:
+        docker_client = docker.from_env(timeout=10) # Add timeout for client connection
+        # Test connection
+        docker_client.ping()
+        print(f"Successfully connected to Docker daemon.")
+        # Optionally pull the image explicitly beforehand
+        try:
+            print(f"Checking for Docker image: {DOCKER_IMAGE}...")
+            docker_client.images.get(DOCKER_IMAGE)
+            print("Image found locally.")
+        except ImageNotFound:
+            print(f"Image '{DOCKER_IMAGE}' not found locally, pulling...")
+            try:
+                docker_client.images.pull(DOCKER_IMAGE)
+                print("Image pulled successfully.")
+            except APIError as pull_err:
+                 results['error'] = f"Failed to pull Docker image '{DOCKER_IMAGE}': {pull_err}. Check image name and registry access."
+                 print(f"Error: {results['error']}")
+                 return results # Cannot proceed without image
+    except DockerConnectionError as e:
+        results['error'] = f"Failed to connect to Docker daemon: {e}. Is Docker running and accessible?"
+        print(f"Error: {results['error']}")
+        return results # Cannot proceed without Docker
+    except Exception as e: # Catch other potential docker.from_env errors
+        results['error'] = f"Failed to initialize Docker client: {e}."
+        print(f"Error: {results['error']}")
+        return results
+
 
     # Iterate through each category and its test cases
     for category, test_cases_in_category in categorized_test_cases.items():
@@ -311,96 +387,174 @@ if __name__ == "__main__":
             llm_error_str = None
             current_llm_time = None
             is_correct = False
+            container = None # Ensure container variable exists for cleanup
+            llm_error_str = None # Reset error for each case
 
-            # Use NamedTemporaryFile for automatic cleanup
-            # Suffix is important for some OS/interpreters
-            # Keep the file open until the subprocess finishes
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as temp_script:
-                temp_script_path = temp_script.name
-                # Write the full script content
-                temp_script.write(script_boilerplate_header)
-                temp_script.write(generated_code)
-                temp_script.write(script_boilerplate_footer)
-                temp_script.flush() # Ensure content is written to disk
+            # Use ExitStack for robust cleanup of tempdir and container
+            with ExitStack() as stack:
+                try:
+                    # Create TemporaryDirectory (automatically cleaned up by ExitStack)
+                    temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
 
-            try:
-                # Serialize input data to JSON
-                input_json = json.dumps(test_case)
+                    script_filename = "script.py"
+                    input_filename = "input.json"
+                    output_filename = "output.json" # Expected output file from container
+                    error_filename = "error.txt" # Expected error file from container
 
-                llm_start_time = time.perf_counter()
-                # Execute the temporary script using the same Python interpreter
-                # Pass input via stdin, capture stdout/stderr
-                process = subprocess.run(
-                    [sys.executable, temp_script_path],
-                    input=input_json.encode('utf-8'),
-                    capture_output=True,
-                    check=False, # Don't raise exception on non-zero exit code
-                    timeout=SUBPROCESS_TIMEOUT # Add timeout
-                )
-                llm_end_time = time.perf_counter()
-                current_llm_time = llm_end_time - llm_start_time
+                    script_path_host = os.path.join(temp_dir, script_filename)
+                    input_path_host = os.path.join(temp_dir, input_filename)
+                    output_path_host = os.path.join(temp_dir, output_filename)
+                    error_path_host = os.path.join(temp_dir, error_filename)
 
-                # Check for errors
-                if process.returncode != 0:
-                    stderr_output = process.stderr.decode('utf-8', errors='replace').strip()
-                    llm_error_str = f"Subprocess exited with code {process.returncode}. Stderr: {stderr_output}"
-                    if not stderr_output: # If stderr is empty, provide a generic message
-                         llm_error_str = f"Subprocess exited with code {process.returncode} (no stderr)."
+                    # Define paths inside the container's sandbox
+                    sandbox_dir = "/sandbox"
+                    script_path_cont = f"{sandbox_dir}/{script_filename}"
+                    # input_path_cont = f"{sandbox_dir}/{input_filename}" # Defined in footer
+                    # output_path_cont = f"{sandbox_dir}/{output_filename}" # Defined in footer
+                    # error_path_cont = f"{sandbox_dir}/{error_filename}" # Defined in footer
 
-                elif process.stderr: # Check stderr even if exit code is 0
-                    stderr_output = process.stderr.decode('utf-8', errors='replace').strip()
-                    # Treat stderr output as a non-fatal warning or potential issue?
-                    # For now, let's log it but not necessarily mark as incorrect if stdout is valid.
-                    print(f"    Warning: Subprocess produced stderr (exit code 0): {stderr_output}")
-                    # Optionally, could set llm_error_str here too if stderr always means failure
 
-                if llm_error_str is None:
-                    # Try parsing the output from stdout
+                    # 1. Write script and input to temp directory on host
+                    with open(script_path_host, 'w', encoding='utf-8') as f_script:
+                        f_script.write(script_boilerplate_header)
+                        f_script.write(generated_code)
+                        f_script.write(script_boilerplate_footer)
+
+                    input_json = json.dumps(test_case)
+                    with open(input_path_host, 'w', encoding='utf-8') as f_input:
+                        f_input.write(input_json)
+
+                    # 2. Run Docker container
+                    llm_start_time = time.perf_counter()
+
+                    container = docker_client.containers.run(
+                        image=DOCKER_IMAGE,
+                        command=["python", script_path_cont],
+                        volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'rw'}}, # Mount RW for output/error files
+                        working_dir=sandbox_dir,
+                        stdout=False, # Don't capture stdout directly, use files
+                        stderr=False, # Don't capture stderr directly, use files
+                        mem_limit=CONTAINER_MEM_LIMIT,
+                        cpu_shares=CONTAINER_CPU_SHARES,
+                        detach=True, # Run detached to manage timeout manually
+                        # Security options (consider adding more if needed)
+                        # read_only=True, # Filesystem read-only (except mounted volume)
+                        # network_mode='none', # Disable networking
+                    )
+                    # Ensure container is removed even if errors occur below
+                    stack.callback(lambda c: c.remove(force=True), container)
+
+                    # Wait for container to finish with timeout
                     try:
-                        stdout_output = process.stdout.decode('utf-8', errors='replace')
-                        actual_output = json.loads(stdout_output)
-
-                        # Validate correctness
-                        if actual_output == expected_output:
-                            is_correct = True
-                            overall_correct_count += 1
-                            cat_stats['correct_count'] += 1
-                            # Only add time for correct runs
-                            overall_llm_time += current_llm_time
-                            cat_stats['llm_time'] += current_llm_time
-                            overall_llm_runs_timed += 1
-                            cat_stats['llm_runs_timed'] += 1
-                            progress_data['status'] = 'Correct'
+                        # wait() returns dict with 'StatusCode' and 'Error'
+                        result = container.wait(timeout=DOCKER_TIMEOUT)
+                        exit_code = result.get('StatusCode', -1)
+                        container_error = result.get('Error') # Docker-level error message
+                        if container_error:
+                             llm_error_str = f"Container reported error: {container_error}"
+                    except (DockerConnectionError, APIError) as wait_err:
+                        # Error communicating with Docker *during* wait
+                        llm_error_str = f"Docker API error during wait: {wait_err}"
+                        exit_code = -2 # Indicate API error during wait
+                    except Exception as wait_timeout_err: # Catch potential timeout errors from requests lib used by docker-py
+                        # Check if the error message indicates a timeout
+                        if 'read timed out' in str(wait_timeout_err).lower():
+                             llm_error_str = f"Container timed out after {DOCKER_TIMEOUT} seconds (wait operation)."
+                             exit_code = -3 # Indicate timeout
+                             # Attempt to kill the container if it timed out
+                             try: container.kill()
+                             except APIError: pass # Ignore if already stopped or gone
                         else:
-                            # Log incorrect sort
-                            actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
-                            expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
-                            test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                            print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
-                            progress_data['status'] = 'Incorrect'
-                            progress_data['output_snippet'] = actual_repr
-
-                    except json.JSONDecodeError as json_e:
-                        llm_error_str = f"Failed to decode JSON output from subprocess: {json_e}. Raw stdout: '{process.stdout[:200]}...'"
-                    except Exception as parse_e:
-                         llm_error_str = f"Error processing subprocess output: {parse_e}"
-
-            except subprocess.TimeoutExpired:
-                llm_error_str = f"Subprocess timed out after {SUBPROCESS_TIMEOUT} seconds."
-                current_llm_time = SUBPROCESS_TIMEOUT # Record timeout duration as time taken
-            except Exception as exec_e:
-                llm_error_str = f"Error running subprocess: {exec_e}"
-            finally:
-                # Ensure the temporary file is deleted
-                if os.path.exists(temp_script_path):
-                    try:
-                        os.remove(temp_script_path)
-                    except OSError as e:
-                        print(f"    Warning: Failed to delete temporary file {temp_script_path}: {e}")
+                             # Different unexpected error during wait
+                             llm_error_str = f"Unexpected error during container wait: {wait_timeout_err}"
+                             exit_code = -4
+                    finally:
+                         llm_end_time = time.perf_counter()
+                         current_llm_time = llm_end_time - llm_start_time
 
 
-            # --- Handle LLM Run Outcome ---
-            if llm_error_str:
+                    # 3. Process results by reading files from host temp dir
+                    container_error_log = ""
+                    if os.path.exists(error_path_host):
+                        try:
+                            with open(error_path_host, 'r', encoding='utf-8') as f_err:
+                                container_error_log = f_err.read().strip()
+                        except Exception as read_err:
+                            print(f"    Warning: Failed to read error log file {error_path_host}: {read_err}")
+                            container_error_log = "(Failed to read error log)"
+
+
+                    # Prioritize errors: Docker-level > Timeout > Non-zero exit > Error log content
+                    if llm_error_str: # Docker error or timeout takes precedence
+                        pass # llm_error_str already set
+                    elif exit_code != 0:
+                        llm_error_str = f"Container exited with code {exit_code}."
+                        if container_error_log:
+                            llm_error_str += f" Error log:\n---\n{container_error_log}\n---"
+                        else:
+                            llm_error_str += " (No error log found or log was empty)"
+                    elif container_error_log: # Exit code 0, but error log has content (e.g., stray prints)
+                         print(f"    Warning: Container exited code 0 but produced error log:\n---\n{container_error_log}\n---")
+                         # Decide if this should be treated as an error or just a warning
+                         # For now, let's proceed to check output if exit code was 0
+
+                    # If no critical error reported so far, try to read and validate output
+                    if llm_error_str is None:
+                        if not os.path.exists(output_path_host):
+                            llm_error_str = "Container finished successfully but output file was not created."
+                            if container_error_log: # Add context if available
+                                 llm_error_str += f" Error log content:\n---\n{container_error_log}\n---"
+                        else:
+                            try:
+                                with open(output_path_host, 'r', encoding='utf-8') as f_out:
+                                    stdout_output = f_out.read()
+                                actual_output = json.loads(stdout_output)
+
+                                # Validate correctness
+                                if actual_output == expected_output:
+                                    is_correct = True
+                                    overall_correct_count += 1
+                                    cat_stats['correct_count'] += 1
+                                    # Only add time for correct runs
+                                    overall_llm_time += current_llm_time
+                                    cat_stats['llm_time'] += current_llm_time
+                                    overall_llm_runs_timed += 1
+                                    cat_stats['llm_runs_timed'] += 1
+                                    progress_data['status'] = 'Correct'
+                                else:
+                                    # Log incorrect sort
+                                    actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
+                                    expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
+                                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                                    print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
+                                    progress_data['status'] = 'Incorrect'
+                                    progress_data['output_snippet'] = actual_repr
+                                    # Optionally capture the incorrect output in llm_error_str for reporting?
+                                    # llm_error_str = f"Incorrect output. Expected: {expected_repr}, Got: {actual_repr}"
+
+                            except json.JSONDecodeError as json_e:
+                                llm_error_str = f"Failed to decode JSON from output file: {json_e}. Raw content: '{stdout_output[:200]}...'"
+                                if container_error_log: llm_error_str += f"\nError log:\n---\n{container_error_log}\n---"
+                            except Exception as parse_e:
+                                 llm_error_str = f"Error reading or parsing output file: {parse_e}"
+                                 if container_error_log: llm_error_str += f"\nError log:\n---\n{container_error_log}\n---"
+
+                # Catch errors during the setup/execution phase *outside* the container run itself
+                except (APIError, DockerConnectionError) as docker_setup_err:
+                    # Catch errors like image not found *during run*, or API errors before wait
+                    llm_error_str = f"Docker API/Connection error during setup/run: {docker_setup_err}"
+                    # Abort evaluation if Docker itself fails fundamentally
+                    results['error'] = llm_error_str
+                    print(f"Aborting evaluation due to Docker error: {llm_error_str}")
+                    return results
+                except Exception as setup_exec_e:
+                    llm_error_str = f"Error setting up or initiating Docker container run: {setup_exec_e}"
+                    # Record time if possible, though it might be minimal
+                    current_llm_time = time.perf_counter() - llm_start_time if 'llm_start_time' in locals() else 0
+
+                # --- Handle LLM Run Outcome ---
+                # llm_error_str should now contain the most relevant error message if any occurred
+                if llm_error_str:
                 test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
                 print(f"    Error during LLM sort subprocess: Input={test_repr}, Error={llm_error_str}")
                 # Report error via callback
