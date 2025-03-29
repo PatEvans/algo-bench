@@ -23,9 +23,41 @@ from typing import Callable, Optional, Any # For type hinting the callback
 # Constant for the generic algorithm name
 GENERAL_ALGORITHM_NAME = "LLM General Sort"
 
-def create_sort_prompt() -> str:
-    """Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm."""
-    return f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
+def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[list[int], list[int]]]:
+    """Generates small input/output examples for the LLM prompt."""
+    examples = []
+    # Ensure basic cases are covered
+    if num_examples >= 1:
+        examples.append(([], [])) # Empty list
+    if num_examples >= 2:
+        examples.append(([5], [5])) # Single element
+    if num_examples >= 3:
+        examples.append(([3, 1, 4, 1, 5, 9], [1, 1, 3, 4, 5, 9])) # Basic unsorted with duplicate
+
+    # Add more random examples if needed
+    current_examples = len(examples)
+    for _ in range(max(0, num_examples - current_examples)):
+        size = random.randint(2, max_size)
+        input_list = [random.randint(min_val, max_val) for _ in range(size)]
+        output_list = sorted(input_list)
+        examples.append((input_list, output_list))
+
+    return examples[:num_examples] # Return exactly num_examples
+
+def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = None) -> str:
+    """
+    Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm,
+    optionally including examples.
+    """
+    base_prompt = f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
+
+    if examples:
+        example_str = "\n\nHere are some examples of how the function should behave:\n"
+        for input_list, output_list in examples:
+            example_str += f"Input: {input_list}\nOutput: {output_list}\n\n"
+        return base_prompt + example_str.strip() # Add examples and remove trailing newline
+    else:
+        return base_prompt
 
 # Increased default sizes for more meaningful timing
 def generate_test_cases(size_small=10, size_medium=10000, size_large=1000000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
@@ -319,7 +351,12 @@ def run_single_benchmark(llm_name: str, categorized_test_cases: dict, progress_c
             'status': 'Generating Code', 'category': 'Setup', 'current_case': 0, 'total_cases': None
         })
 
-    prompt = create_sort_prompt() # Call updated prompt function without algorithm name
+    # Generate examples for the prompt
+    prompt_examples = generate_prompt_examples(num_examples=5) # Generate 5 examples
+    prompt = create_sort_prompt(examples=prompt_examples) # Pass examples to prompt creator
+
+    print(f"  - Prompt includes {len(prompt_examples)} examples.") # Log example usage
+
     generated_code = llm_interface.generate_code(llm_name, prompt)
 
     if not generated_code:
