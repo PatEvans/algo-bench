@@ -259,15 +259,26 @@ def load_and_run_sort():
     sys.stdout = captured_stdout
     sys.stderr = captured_stderr
 
-    start_time = time.perf_counter()
+   start_time = time.perf_counter()
 
-    try:
-        # 1. Load the llm_sort module dynamically
-        module_name = "llm_sort"
-        file_path = "/sandbox/llm_sort.py" # Path inside container
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        if spec is None or spec.loader is None:
-             raise ImportError(f"Could not create module spec for {file_path}")
+   try:
+       # 1. Load the llm_sort module dynamically
+       module_name = "llm_sort"
+       file_path = "/sandbox/llm_sort.py" # Path inside container
+       # --- Check if file exists before attempting import ---
+       if not os.path.exists(file_path):
+           # List directory contents for debugging if file not found
+           try:
+               sandbox_contents = os.listdir('/sandbox')
+               dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
+           except Exception as list_e:
+               dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
+           raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
+       # --- End check ---
+
+       spec = importlib.util.spec_from_file_location(module_name, file_path)
+       if spec is None or spec.loader is None:
+            raise ImportError(f"Could not create module spec for {file_path}")
         llm_module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = llm_module # Add to sys.modules before execution
         spec.loader.exec_module(llm_module)
