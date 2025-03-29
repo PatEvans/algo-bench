@@ -611,7 +611,7 @@ if __name__ == "__main__":
                            current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
 
                            if actual_output == expected_output:
-                               is_correct = True
+                                 is_correct = True
                                  overall_correct_count += 1
                                  cat_stats['correct_count'] += 1
                                  if current_llm_time_ms is not None:
@@ -620,7 +620,7 @@ if __name__ == "__main__":
                                      overall_llm_runs_timed += 1
                                      cat_stats['llm_runs_timed'] += 1
                                  progress_data['status'] = 'Correct'
-                             else:
+                           else:
                                  # Log incorrect sort
                                  actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
                                  expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
