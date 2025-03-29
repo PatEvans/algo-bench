@@ -240,7 +240,11 @@ if __name__ == "__main__":
             # Check if anything was captured (stray prints) and print to stderr as a warning
             stray_prints = captured_stdout.getvalue()
             if stray_prints:
-                print(f"Warning: Generated code produced unexpected stdout during execution:\n---\n{stray_prints}\n---", file=sys.stderr)
+                # Print warning and captured output safely, avoiding f-string issues
+                print("Warning: Generated code produced unexpected stdout during execution:", file=sys.stderr)
+                print("--- Start of captured stdout ---", file=sys.stderr)
+                print(stray_prints, file=sys.stderr) # Print the captured output directly
+                print("--- End of captured stdout ---", file=sys.stderr)
 
         else:
              raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
@@ -248,10 +252,13 @@ if __name__ == "__main__":
     except Exception as e:
         # Print exception details to stderr
         print(f"Error in generated script execution: {e}", file=sys.stderr)
-        # Also print any captured output to stderr for debugging
+        # Also print any captured output to stderr for debugging safely
         stray_prints = captured_stdout.getvalue()
         if stray_prints:
-            print(f"Captured stdout before error:\n---\n{stray_prints}\n---", file=sys.stderr)
+            print("Captured stdout before error:", file=sys.stderr)
+            print("--- Start of captured stdout ---", file=sys.stderr)
+            print(stray_prints, file=sys.stderr) # Print the captured output directly
+            print("--- End of captured stdout ---", file=sys.stderr)
         exit_code = 1 # Indicate failure
     finally:
         # Ensure sys.exit is called outside the try/except if needed,
