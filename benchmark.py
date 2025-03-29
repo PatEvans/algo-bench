@@ -455,13 +455,13 @@ if __name__ == "__main__":
                             # timeout=EXEC_TIMEOUT # Timeout seems unreliable/buggy with stdin=True? Manage externally if needed.
                         )
 
-                        exit_code = exec_result.exit_code
-                        output_bytes = exec_result.output or b"" # Combined stdout/stderr from exec_run
+                       exit_code = exec_result.exit_code
+                       output_bytes = exec_result.output or b"" # Combined stdout/stderr from exec_run
 
-                        host_exec_end_time = time.perf_counter()
+                       host_exec_end_time = time.perf_counter()
 
-                        # Decode the output bytes (potential stdout/stderr from python -c itself, plus our JSON)
-                        try:
+                       # Decode the output bytes (potential stdout/stderr from python -c itself, plus our JSON)
+                       try:
                              output_str = output_bytes.decode('utf-8', errors='replace').strip()
                         except Exception as decode_err:
                              llm_error_str = f"Host failed to decode exec_run output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
