@@ -250,16 +250,16 @@ if __name__ == "__main__":
     # Add a type field to distinguish the final result message
     final_message = {"type": "result", "data": final_results}
     try:
-        print(json.dumps(final_message)) # Print final result to stdout
+        print(json.dumps(final_message), flush=True) # Print final result to stdout and flush
     except TypeError as json_err:
         # Fallback if results contain non-serializable data
         fallback_error = f"FATAL: Could not serialize final results dictionary: {json_err}. Original error: {final_results.get('error')}"
         final_message = {"type": "result", "data": {'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
-        print(json.dumps(final_message)) # Print fallback final result to stdout
+        print(json.dumps(final_message), flush=True) # Print fallback final result to stdout and flush
     except Exception as final_print_err:
          # Ultimate fallback for any other printing error
          final_message = {"type": "result", "data": {'error': f"FATAL: Error printing final JSON: {final_print_err}", 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
-         print(json.dumps(final_message)) # Print ultimate fallback final result to stdout
+         print(json.dumps(final_message), flush=True) # Print ultimate fallback final result to stdout and flush
 
     # Exit explicitly - 0 if no critical error in the final_results dict, 1 otherwise
     sys.exit(1 if final_results.get('error') else 0)
