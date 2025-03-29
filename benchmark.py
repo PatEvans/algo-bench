@@ -376,15 +376,14 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                                if llm_error_str: # Check if inner loop broke due to error
                                    break # Exit outer loop
 
-                               # We only care about the stdout stream (type 1) for the JSON result
+                               # Accumulate stdout stream (type 1) payloads
                                if stream_type == 1:
-                                   output_bytes = payload # Store the stdout payload
-                                   # Assume the first stdout payload is the complete JSON result
-                                   # and break the loop. If more output is expected, adjust logic.
-                                   break
+                                   output_bytes += payload # Append the stdout payload
+                                   # Do not break here; continue reading until stream closes
                                elif stream_type == 2:
                                    # Log stderr for debugging if needed
-                                   print(f"DEBUG: Received stderr stream from container: {payload.decode('utf-8', errors='replace')}")
+                                   stderr_payload = payload.decode('utf-8', errors='replace')
+                                   print(f"DEBUG: Received stderr stream from container: {stderr_payload}")
                                    # Continue reading in case stdout follows stderr
                                else:
                                    # Ignore other stream types (e.g., stdin type 0)
