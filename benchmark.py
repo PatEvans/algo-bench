@@ -555,13 +555,13 @@ if __name__ == "__main__":
                 # --- Handle LLM Run Outcome ---
                 # llm_error_str should now contain the most relevant error message if any occurred
                 if llm_error_str:
-                test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                print(f"    Error during LLM sort subprocess: Input={test_repr}, Error={llm_error_str}")
-                # Report error via callback
-                if progress_callback:
-                    progress_data['status'] = 'Error'
-                    progress_data['error'] = llm_error_str
-                    progress_callback(progress_data)
+                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                    print(f"    Error during LLM sort subprocess: Input={test_repr}, Error={llm_error_str}")
+                    # Report error via callback
+                    if progress_callback:
+                        progress_data['status'] = 'Error'
+                        progress_data['error'] = llm_error_str
+                        progress_callback(progress_data)
             elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
                  progress_callback(progress_data)
 
