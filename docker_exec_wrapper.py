@@ -249,17 +249,30 @@ if __name__ == "__main__":
     # --- Print the final aggregated results as JSON to stdout ---
     # Add a type field to distinguish the final result message
     final_message = {"type": "result", "data": final_results}
+    print("DEBUG WRAPPER: Preparing to print final JSON to stdout.", file=sys.stderr, flush=True) # DEBUG ADDED
     try:
-        print(json.dumps(final_message), flush=True) # Print final result to stdout and flush
+        final_json_string = json.dumps(final_message) # Serialize once
+        print(f"DEBUG WRAPPER: Final JSON string length: {len(final_json_string)}", file=sys.stderr, flush=True) # DEBUG ADDED
+        print(f"DEBUG WRAPPER: Final JSON to print (first 500 chars): {final_json_string[:500]}", file=sys.stderr, flush=True) # DEBUG ADDED
+        print(final_json_string, flush=True) # Print final result to stdout and flush
+        print("DEBUG WRAPPER: Successfully printed final JSON to stdout.", file=sys.stderr, flush=True) # DEBUG ADDED
     except TypeError as json_err:
+        print("DEBUG WRAPPER: Caught TypeError during final JSON serialization/print.", file=sys.stderr, flush=True) # DEBUG ADDED
         # Fallback if results contain non-serializable data
         fallback_error = f"FATAL: Could not serialize final results dictionary: {json_err}. Original error: {final_results.get('error')}"
         final_message = {"type": "result", "data": {'error': fallback_error, 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
+        print(f"DEBUG WRAPPER: Printing fallback JSON due to TypeError.", file=sys.stderr, flush=True) # DEBUG ADDED
         print(json.dumps(final_message), flush=True) # Print fallback final result to stdout and flush
+        print("DEBUG WRAPPER: Successfully printed fallback JSON to stdout (TypeError).", file=sys.stderr, flush=True) # DEBUG ADDED
     except Exception as final_print_err:
+         print(f"DEBUG WRAPPER: Caught Exception ({type(final_print_err).__name__}) during final JSON serialization/print.", file=sys.stderr, flush=True) # DEBUG ADDED
          # Ultimate fallback for any other printing error
          final_message = {"type": "result", "data": {'error': f"FATAL: Error printing final JSON: {final_print_err}", 'correctness': 0.0, 'avg_time_ms': None, 'baseline_avg_time_ms': None, 'performance_details': {}}}
+         print(f"DEBUG WRAPPER: Printing fallback JSON due to other Exception.", file=sys.stderr, flush=True) # DEBUG ADDED
          print(json.dumps(final_message), flush=True) # Print ultimate fallback final result to stdout and flush
+         print("DEBUG WRAPPER: Successfully printed fallback JSON to stdout (Exception).", file=sys.stderr, flush=True) # DEBUG ADDED
 
+    exit_code_to_use = 1 if final_results.get('error') else 0
+    print(f"DEBUG WRAPPER: Exiting with code {exit_code_to_use}.", file=sys.stderr, flush=True) # DEBUG ADDED
     # Exit explicitly - 0 if no critical error in the final_results dict, 1 otherwise
-    sys.exit(1 if final_results.get('error') else 0)
+    sys.exit(exit_code_to_use)
