@@ -24,6 +24,7 @@ from contextlib import ExitStack # To manage multiple context managers (tempdir,
 import tarfile # To create tar archives for copying into container
 import io # To handle in-memory tar archive
 import textwrap # To dedent the wrapper code string
+import socket # For socket operations with exec_run
 
 # Using Docker containers provides better isolation than subprocess.
 
@@ -518,70 +519,99 @@ if __name__ == "__main__":
                        # Pass input via stdin=True
                        exec_command = ["python", runner_script_path_cont] # e.g., ["python", "/sandbox/exec_runner.py"]
 
-                       # Use stream=False, demux=False to get combined output as bytes
-                       exec_result = container.exec_run(
+                       # Use socket=True for reliable stdin/stdout handling
+                       exec_id = docker_client.api.exec_create(
+                           container.id,
                            cmd=exec_command,
                            stdin=True,
-                           stdout=True, # Capture stdout from exec_run
-                            stderr=True, # Capture stderr from exec_run (though wrapper redirects)
-                            socket=False, # Use simple exec, not socket
-                            stream=False, # Get result after completion
-                            demux=False, # Get interleaved stdout/stderr
-                            workdir=sandbox_dir,
-                            # Note: Timeout for exec_run itself, not the whole container
-                            # timeout=EXEC_TIMEOUT # Timeout seems unreliable/buggy with stdin=True? Manage externally if needed.
-                        )
+                           stdout=True,
+                           stderr=True, # Still capture stderr, wrapper combines it
+                           workdir=sandbox_dir,
+                       )
+                       _sock = docker_client.api.exec_start(exec_id, socket=True)
+                       _sock_low_level = _sock._sock # Get the underlying socket
 
-                       exit_code = exec_result.exit_code
-                       output_bytes = exec_result.output or b"" # Combined stdout/stderr from exec_run
-
-                       host_exec_end_time = time.perf_counter()
-
-                       # Decode the output bytes (potential stdout/stderr from python -c itself, plus our JSON)
-                       try:
-                           output_str = output_bytes.decode('utf-8', errors='replace').strip()
-                       except Exception as decode_err:
-                           llm_error_str = f"Host failed to decode exec_run output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
-                           output_str = "" # Cannot parse JSON
-
-                       # Attempt to parse the JSON result from the *last line* of the output
+                       output_bytes = b""
                        parsed_result = None
-                       if output_str and llm_error_str is None:
-                            try:
-                                # Find the last line that looks like JSON
-                                last_line = output_str.splitlines()[-1]
-                                parsed_result = json.loads(last_line)
-                            except (json.JSONDecodeError, IndexError) as json_e:
-                                llm_error_str = f"Failed to decode JSON result from exec_run output: {json_e}. Full output:\n---\n{output_str[:1000]}\n---"
-                            except Exception as parse_e:
-                                llm_error_str = f"Unexpected error parsing exec_run output: {parse_e}. Full output:\n---\n{output_str[:1000]}\n---"
 
-                        # --- Process the parsed result ---
-                       if llm_error_str: # If host-level parsing failed
-                            pass # Error already set
+                       try:
+                           # Write input JSON to stdin stream
+                           # Need to encode the string to bytes
+                           input_bytes = input_json.encode('utf-8')
+                           # Wrap socket for writing bytes
+                           stdin_stream = _sock_low_level.makefile('wb')
+                           stdin_stream.write(input_bytes)
+                           # IMPORTANT: Close the write half to signal EOF to the container's stdin.read()
+                           _sock_low_level.shutdown(socket.SHUT_WR)
+                           stdin_stream.close() # Close the file wrapper
+
+                           # Read all output from stdout stream until closed
+                           # Wrap socket for reading bytes
+                           stdout_stream = _sock_low_level.makefile('rb')
+                           output_bytes = stdout_stream.read()
+                           stdout_stream.close() # Close the file wrapper
+
+                       except (socket.error, BrokenPipeError, OSError) as sock_err:
+                           llm_error_str = f"Socket error during exec: {sock_err}"
+                       except Exception as stream_err:
+                           llm_error_str = f"Error during socket stream I/O: {stream_err}"
+                       finally:
+                           # Ensure socket is closed
+                           if _sock_low_level:
+                               _sock_low_level.close()
+                           if _sock: # Close the high-level wrapper too
+                               _sock.close()
+
+                       host_exec_end_time = time.perf_counter() # Timing remains similar
+
+                       # Check exec exit code *after* reading output
+                       exec_inspect = docker_client.api.exec_inspect(exec_id)
+                       exit_code = exec_inspect.get('ExitCode')
+
+                       # Decode and parse output bytes (similar logic as before)
+                       if llm_error_str is None: # Only proceed if no socket error
+                           try:
+                               output_str = output_bytes.decode('utf-8', errors='replace').strip()
+                           except Exception as decode_err:
+                               llm_error_str = f"Host failed to decode exec output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
+                               output_str = ""
+
+                           if output_str and llm_error_str is None:
+                               try:
+                                   # Find the last line that looks like JSON
+                                   last_line = output_str.splitlines()[-1]
+                                   parsed_result = json.loads(last_line)
+                               except (json.JSONDecodeError, IndexError) as json_e:
+                                   llm_error_str = f"Failed to decode JSON result from exec output: {json_e}. Full output:\n---\n{output_str[:1000]}\n---"
+                               except Exception as parse_e:
+                                   llm_error_str = f"Unexpected error parsing exec output: {parse_e}. Full output:\n---\n{output_str[:1000]}\n---"
+
+                       # --- Process the parsed result (logic remains largely the same) ---
+                       if llm_error_str: # If host-level parsing or socket error occurred
+                           pass # Error already set
                        elif exit_code is None:
-                             llm_error_str = f"exec_run did not return an exit code (may indicate timeout or Docker issue)."
+                           llm_error_str = f"Exec did not return an exit code (inspect result: {exec_inspect})."
                        elif exit_code != 0:
-                             llm_error_str = f"Exec wrapper exited with code {exit_code}."
-                             # Append JSON error if available, otherwise append raw output
-                             if parsed_result and parsed_result.get('error'):
-                                 llm_error_str += f" Internal error:\n---\n{parsed_result['error']}\n---"
-                             elif output_str:
-                                 llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
+                           llm_error_str = f"Exec wrapper exited with code {exit_code}."
+                           # Append JSON error if available, otherwise append raw output
+                           if parsed_result and parsed_result.get('error'):
+                               llm_error_str += f" Internal error:\n---\n{parsed_result['error']}\n---"
+                           elif output_str:
+                               llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
                        elif parsed_result is None:
-                             # Should not happen if exit code is 0 and no parsing error occurred, but check defensively
-                             llm_error_str = "Exec wrapper exited code 0 but host failed to parse JSON result."
-                             if output_str: llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
+                           # Should not happen if exit code is 0 and no parsing error occurred, but check defensively
+                           llm_error_str = "Exec wrapper exited code 0 but host failed to parse JSON result."
+                           if output_str: llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
                        elif parsed_result.get('error'):
-                             # Exit code 0, but the script internally caught an error
-                             llm_error_str = f"Exec wrapper reported internal error:\n---\n{parsed_result['error']}\n---"
+                           # Exit code 0, but the script internally caught an error
+                           llm_error_str = f"Exec wrapper reported internal error:\n---\n{parsed_result['error']}\n---"
                        else:
-                             # --- Success Case ---
-                             actual_output = parsed_result.get('output')
-                             current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
+                           # --- Success Case ---
+                           actual_output = parsed_result.get('output')
+                           current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
 
-                             if actual_output == expected_output:
-                                 is_correct = True
+                           if actual_output == expected_output:
+                               is_correct = True
                                  overall_correct_count += 1
                                  cat_stats['correct_count'] += 1
                                  if current_llm_time_ms is not None:
