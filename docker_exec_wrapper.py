@@ -115,14 +115,17 @@ def run_all_benchmarks():
                         cat_stats['llm_time_sec'] += llm_time_sec
                         overall_llm_runs_timed += 1
                         cat_stats['llm_runs_timed'] += 1
+                        print(" -> Correct", file=sys.stderr) # Append outcome to the initial print
                     else:
-                        # Optional: Log incorrectness details if needed for debugging wrapper
-                        # print(f"DEBUG WRAPPER: Incorrect sort for category '{category}'. Input: {test_case[:10]}..., Expected: {expected_output[:10]}..., Got: {actual_output[:10]}...", file=sys.stderr)
-                        pass
+                        # Log incorrectness details if needed for debugging wrapper
+                        actual_repr = repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
+                        expected_repr = repr(expected_output[:15]) + ('...' if len(expected_output) > 15 else '')
+                        print(f" -> INCORRECT (Expected: {expected_repr}, Got: {actual_repr})", file=sys.stderr)
 
 
                 except Exception as exec_err:
                     # Error during LLM execution or baseline sort for this case
+                    print(f" -> ERROR", file=sys.stderr) # Append outcome to the initial print
                     case_error = f"{type(exec_err).__name__}: {exec_err}\n{traceback.format_exc()}"
                     cat_stats['errors'].append({
                         'input_snippet': repr(test_case[:20]) + ('...' if len(test_case) > 20 else ''),
