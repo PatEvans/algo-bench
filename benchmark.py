@@ -562,8 +562,8 @@ if __name__ == "__main__":
                         progress_data['status'] = 'Error'
                         progress_data['error'] = llm_error_str
                         progress_callback(progress_data)
-            elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
-                 progress_callback(progress_data)
+                elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
+                     progress_callback(progress_data)
 
 
             # --- Time Python's built-in sorted() ---
