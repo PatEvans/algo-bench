@@ -18,7 +18,31 @@ app.secret_key = 'super secret key' # Change this to a random secret key, maybe 
 # --- Constants ---
 TEST_SUITE_FILENAME = benchmark.DEFAULT_TEST_SUITE_FILE # Use the default from benchmark.py
 PYTHON_SORTED_BENCHMARK = "Python sorted()"
-AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
+EXAMPLE_CODE_OPTION = "Example Code"
+# Define the example code snippet (e.g., a simple bubble sort)
+EXAMPLE_CODE_SNIPPET = """
+def sort_algorithm(data):
+    '''Sorts a list of numbers using bubble sort.'''
+    n = len(data)
+    if n <= 1:
+        return data
+    # Traverse through all array elements
+    for i in range(n):
+        swapped = False
+        # Last i elements are already in place
+        for j in range(0, n-i-1):
+            # Traverse the array from 0 to n-i-1
+            # Swap if the element found is greater
+            # than the next element
+            if data[j] > data[j+1]:
+                data[j], data[j+1] = data[j+1], data[j]
+                swapped = True
+        # If no two elements were swapped by inner loop, then break
+        if not swapped:
+            break
+    return data
+"""
+AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, EXAMPLE_CODE_OPTION, "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
 # AVAILABLE_ALGORITHMS removed as specific algorithms are no longer selected
 
 # --- Benchmark Status Tracking ---
@@ -87,7 +111,9 @@ def admin():
 def run_benchmark_background(task_id, llm_name):
     """Function to run benchmark in a separate thread and update status."""
     # Determine the algorithm label based on the LLM type
-    algorithm_label = benchmark.GENERAL_ALGORITHM_NAME if llm_name != PYTHON_SORTED_BENCHMARK else benchmark.BASELINE_ALGORITHM_NAME
+    # Use GENERAL_ALGORITHM_NAME for both actual LLMs and the Example Code
+    is_baseline = llm_name == PYTHON_SORTED_BENCHMARK
+    algorithm_label = benchmark.BASELINE_ALGORITHM_NAME if is_baseline else benchmark.GENERAL_ALGORITHM_NAME
     print(f"Starting background benchmark task {task_id}: {llm_name} - {algorithm_label}")
 
     def progress_callback(update_data):
@@ -141,17 +167,42 @@ def run_benchmark_background(task_id, llm_name):
         print(f"Task {task_id}: Using pre-loaded test suite.")
         # The test suite is already loaded in GLOBAL_TEST_SUITE
 
-        # --- Generate Code (if LLM) or Run Baseline ---
+        # --- Generate Code (if LLM), Use Example Code, or Run Baseline ---
         if llm_name == PYTHON_SORTED_BENCHMARK:
             # Run benchmark using Python's built-in sorted()
-            # No code generation step needed
             progress_callback({'status': 'Running Baseline', 'category': 'Setup'})
             result = benchmark.run_python_sorted_benchmark(
                 categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
+        elif llm_name == EXAMPLE_CODE_OPTION:
+             # --- Use Example Code ---
+            progress_callback({'status': 'Using Example Code', 'category': 'Setup'})
+            generated_code_for_llm = EXAMPLE_CODE_SNIPPET
+            print(f"Task {task_id}: Using predefined example code.")
+
+            # --- Update Status with Example Code BEFORE Evaluation ---
+            with STATUS_LOCK:
+                if task_id in BENCHMARK_STATUS:
+                    BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
+                    BENCHMARK_STATUS[task_id]['status'] = 'Evaluating Example Code...'
+                    BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+            progress_callback({
+                'status': 'Evaluating Example Code...',
+                'category': 'Setup',
+                'generated_code': generated_code_for_llm
+            })
+
+            # --- Run benchmark evaluation using the example code ---
+            # Note: We still pass llm_name=EXAMPLE_CODE_OPTION so the results are tagged correctly
+            result = benchmark.run_single_benchmark(
+                llm_name=llm_name, # Pass "Example Code" as the identifier
+                generated_code=generated_code_for_llm, # Pass the example code snippet
+                categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
+                progress_callback=progress_callback
+            )
         else:
-            # --- Generate Code using LLM ---
+            # --- Generate Code using Actual LLM ---
             progress_callback({'status': 'Generating Code', 'category': 'Setup'})
             prompt_examples = benchmark.generate_prompt_examples(num_examples=5)
             prompt = benchmark.create_sort_prompt(examples=prompt_examples)
@@ -159,7 +210,7 @@ def run_benchmark_background(task_id, llm_name):
             generated_code_for_llm = llm_interface.generate_code(llm_name, prompt)
 
             if not generated_code_for_llm:
-                raise ValueError("LLM failed to generate code.")
+                raise ValueError(f"LLM '{llm_name}' failed to generate code.")
 
             # --- Update Status with Generated Code BEFORE Evaluation ---
             with STATUS_LOCK:
@@ -184,11 +235,14 @@ def run_benchmark_background(task_id, llm_name):
             )
 
         # --- Save final result to DB ---
-        # Ensure the result dict includes the generated code if applicable
-        if generated_code_for_llm and result:
-            result['generated_code'] = generated_code_for_llm
-        elif llm_name == PYTHON_SORTED_BENCHMARK and result:
-             result['generated_code'] = "N/A - Python sorted()" # Ensure baseline has placeholder
+        # Ensure the result dict includes the generated code
+        if result:
+            if generated_code_for_llm:
+                 result['generated_code'] = generated_code_for_llm
+            elif llm_name == PYTHON_SORTED_BENCHMARK:
+                 result['generated_code'] = "N/A - Python sorted()" # Placeholder for baseline
+            # Ensure algorithm label is in the result dict before saving
+            result['algorithm'] = algorithm_label # Add/overwrite algorithm label
 
         if result: # Only save if a result was actually produced
             database.save_result(result)
@@ -233,9 +287,8 @@ def run_benchmark_background(task_id, llm_name):
         error_result = {
             'llm': llm_name,
             'algorithm': algorithm_label, # Use the determined label
-            'error': f"Benchmark execution failed: {e}",
+            'error': error_message, # Use the formatted error message
             'correctness': None,
-            # Lines updating BENCHMARK_STATUS removed from here, handled above in STATUS_LOCK block
             'avg_time_ms': None,
             'baseline_avg_time_ms': None,
             'performance_details': None,
