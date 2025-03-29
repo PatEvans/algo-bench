@@ -133,7 +133,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
     # Define container resource limits (adjust as needed)
     # EXEC_TIMEOUT is now handled by the wrapper script's logic or potentially docker exec timeout param
     EXEC_TIMEOUT_SECONDS = 300 # Timeout for the *entire* exec call (adjust as needed)
-    CONTAINER_MEM_LIMIT = "256m" # e.g., 256 MB memory limit
+    CONTAINER_MEM_LIMIT = "1g" # Increased memory limit to 1 GB to handle large test cases
     CONTAINER_CPU_SHARES = 512 # Relative CPU weight (default 1024)
 
     # Initialize Docker client
