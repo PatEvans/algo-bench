@@ -59,7 +59,9 @@ def sort_algorithm(arr):
                 return None
 
             genai.configure(api_key=api_key)
-            # Using gemini-1.5-pro-latest, adjust if needed
+            # Using gemini-1.5-pro-latest as the API identifier.
+            # This might need adjustment if/when Google provides a specific
+            # identifier for "Gemini 2.5 Pro Exp".
             model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
             # Optional: Add safety settings if desired
