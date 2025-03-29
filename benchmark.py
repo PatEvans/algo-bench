@@ -449,6 +449,9 @@ if __name__ == "__main__":
                     with open(input_path_host, 'w', encoding='utf-8') as f_input:
                         f_input.write(input_json)
 
+                    # Add a small delay before starting the container (potential workaround for FS propagation)
+                    time.sleep(0.1) # Sleep for 100ms
+
                     # 2. Run Docker container
                     llm_start_time = time.perf_counter()
 
