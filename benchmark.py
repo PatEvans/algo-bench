@@ -11,6 +11,10 @@ import time
 import random
 import llm_interface
 import json
+import subprocess # For running the generated code in a separate process
+import sys # To get the current Python executable path
+import tempfile # For creating temporary files
+import os # For file path operations
 from collections import defaultdict
 import time # Re-importing for clarity, used within functions
 import random # Re-importing for clarity, used within functions
@@ -233,72 +237,136 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                 if progress_callback:
                     progress_callback(progress_data) # Report start of case processing
 
-                # Prepare inputs for both sorts
-                llm_input = list(test_case)
-                baseline_input = list(test_case)
-                expected_output = sorted(test_case) # Ground truth
+            # Prepare inputs
+            baseline_input = list(test_case) # For baseline timing
+            expected_output = sorted(test_case) # Ground truth
 
-                # --- Time LLM's sort_algorithm ---
+            # --- Execute and Time LLM's sort_algorithm via Subprocess ---
+            actual_output = None
+            llm_error_str = None
+            current_llm_time = None
+            is_correct = False
+
+            # Use NamedTemporaryFile for automatic cleanup
+            # Suffix is important for some OS/interpreters
+            # Keep the file open until the subprocess finishes
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as temp_script:
+                temp_script_path = temp_script.name
+                # Write the full script content
+                temp_script.write(script_boilerplate_header)
+                temp_script.write(generated_code)
+                temp_script.write(script_boilerplate_footer)
+                temp_script.flush() # Ensure content is written to disk
+
+            try:
+                # Serialize input data to JSON
+                input_json = json.dumps(test_case)
+
                 llm_start_time = time.perf_counter()
-                actual_output = None
-                llm_error = None
-                current_llm_time = None
-                is_correct = False
+                # Execute the temporary script using the same Python interpreter
+                # Pass input via stdin, capture stdout/stderr
+                process = subprocess.run(
+                    [sys.executable, temp_script_path],
+                    input=input_json.encode('utf-8'),
+                    capture_output=True,
+                    check=False, # Don't raise exception on non-zero exit code
+                    timeout=SUBPROCESS_TIMEOUT # Add timeout
+                )
+                llm_end_time = time.perf_counter()
+                current_llm_time = llm_end_time - llm_start_time
 
-                try:
-                    actual_output = sort_func(llm_input)
-                    llm_end_time = time.perf_counter()
-                    current_llm_time = llm_end_time - llm_start_time
+                # Check for errors
+                if process.returncode != 0:
+                    stderr_output = process.stderr.decode('utf-8', errors='replace').strip()
+                    llm_error_str = f"Subprocess exited with code {process.returncode}. Stderr: {stderr_output}"
+                    if not stderr_output: # If stderr is empty, provide a generic message
+                         llm_error_str = f"Subprocess exited with code {process.returncode} (no stderr)."
 
-                    if actual_output == expected_output:
-                        is_correct = True
-                        overall_correct_count += 1
-                        cat_stats['correct_count'] += 1
-                        # Only add time for correct runs to avoid skewing averages
-                        overall_llm_time += current_llm_time
-                        cat_stats['llm_time'] += current_llm_time
-                        overall_llm_runs_timed += 1
-                        cat_stats['llm_runs_timed'] += 1
-                    else:
-                        # Log incorrect sort
-                        actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
-                        expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
-                        test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                        print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
-                        progress_data['status'] = 'Incorrect'
-                        progress_data['output_snippet'] = actual_repr
-                    # Update progress after LLM run (if no exception)
-                    if progress_callback:
-                        progress_callback(progress_data)
+                elif process.stderr: # Check stderr even if exit code is 0
+                    stderr_output = process.stderr.decode('utf-8', errors='replace').strip()
+                    # Treat stderr output as a non-fatal warning or potential issue?
+                    # For now, let's log it but not necessarily mark as incorrect if stdout is valid.
+                    print(f"    Warning: Subprocess produced stderr (exit code 0): {stderr_output}")
+                    # Optionally, could set llm_error_str here too if stderr always means failure
 
-                except Exception as e:
-                    llm_error = e
-                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                    print(f"    Error during LLM sort execution: Input={test_repr}, Error={e}")
-                    # Do not count time if it errored
-                    # Report error via callback
-                    if progress_callback:
-                        progress_data['status'] = 'Error'
-                        progress_data['error'] = str(e)
-                        progress_callback(progress_data)
+                if llm_error_str is None:
+                    # Try parsing the output from stdout
+                    try:
+                        stdout_output = process.stdout.decode('utf-8', errors='replace')
+                        actual_output = json.loads(stdout_output)
 
-                # --- Time Python's built-in sorted() ---
-                baseline_start_time = time.perf_counter()
-                current_baseline_time = None
-                try:
-                    _ = sorted(baseline_input) # Execute baseline sort
-                    baseline_end_time = time.perf_counter()
-                    current_baseline_time = baseline_end_time - baseline_start_time
-                    overall_baseline_time += current_baseline_time
-                    cat_stats['baseline_time'] += current_baseline_time
-                except Exception as e:
-                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                    print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
-                    # Decide how to handle baseline errors (e.g., skip timing for this case?)
+                        # Validate correctness
+                        if actual_output == expected_output:
+                            is_correct = True
+                            overall_correct_count += 1
+                            cat_stats['correct_count'] += 1
+                            # Only add time for correct runs
+                            overall_llm_time += current_llm_time
+                            cat_stats['llm_time'] += current_llm_time
+                            overall_llm_runs_timed += 1
+                            cat_stats['llm_runs_timed'] += 1
+                            progress_data['status'] = 'Correct'
+                        else:
+                            # Log incorrect sort
+                            actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
+                            expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
+                            test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                            print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
+                            progress_data['status'] = 'Incorrect'
+                            progress_data['output_snippet'] = actual_repr
 
-        # --- Calculate Final Results ---
+                    except json.JSONDecodeError as json_e:
+                        llm_error_str = f"Failed to decode JSON output from subprocess: {json_e}. Raw stdout: '{process.stdout[:200]}...'"
+                    except Exception as parse_e:
+                         llm_error_str = f"Error processing subprocess output: {parse_e}"
 
-        # Overall results
+            except subprocess.TimeoutExpired:
+                llm_error_str = f"Subprocess timed out after {SUBPROCESS_TIMEOUT} seconds."
+                current_llm_time = SUBPROCESS_TIMEOUT # Record timeout duration as time taken
+            except Exception as exec_e:
+                llm_error_str = f"Error running subprocess: {exec_e}"
+            finally:
+                # Ensure the temporary file is deleted
+                if os.path.exists(temp_script_path):
+                    try:
+                        os.remove(temp_script_path)
+                    except OSError as e:
+                        print(f"    Warning: Failed to delete temporary file {temp_script_path}: {e}")
+
+
+            # --- Handle LLM Run Outcome ---
+            if llm_error_str:
+                test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                print(f"    Error during LLM sort subprocess: Input={test_repr}, Error={llm_error_str}")
+                # Report error via callback
+                if progress_callback:
+                    progress_data['status'] = 'Error'
+                    progress_data['error'] = llm_error_str
+                    progress_callback(progress_data)
+            elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
+                 progress_callback(progress_data)
+
+
+            # --- Time Python's built-in sorted() ---
+            baseline_start_time = time.perf_counter()
+            current_baseline_time = None
+            try:
+                _ = sorted(baseline_input) # Execute baseline sort
+                baseline_end_time = time.perf_counter()
+                current_baseline_time = baseline_end_time - baseline_start_time
+                overall_baseline_time += current_baseline_time
+                cat_stats['baseline_time'] += current_baseline_time
+            except Exception as e:
+                test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
+                # Decide how to handle baseline errors (e.g., skip timing for this case?)
+
+    # --- Calculate Final Results ---
+    # (Error handling for overall execution moved outside the loop)
+    # Check if any fundamental error occurred before processing cases (e.g., invalid generated_code structure)
+    # This part is less relevant now as syntax errors are caught per-case by subprocess
+
+    # Overall results
         if overall_total_cases > 0:
             results['correctness'] = (overall_correct_count / overall_total_cases) * 100
             results['baseline_avg_time_ms'] = (overall_baseline_time / overall_total_cases) * 1000
@@ -312,17 +380,13 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
             cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
             results['performance_details'][category] = {
                 'correctness': cat_correctness,
-                'avg_time_ms': cat_avg_llm_time,
+                'avg_time_ms': cat_avg_llm_time, # Note: Includes subprocess overhead
                 'baseline_avg_time_ms': cat_avg_baseline_time,
                 'count': stats['case_count']
             }
 
-    except SyntaxError as e:
-        results['error'] = f"Syntax error in generated code: {e}"
-        # Ensure performance_details is still present, even if empty
-        results['performance_details'] = results.get('performance_details', {})
-    except Exception as e:
-        results['error'] = f"Error executing generated code: {e}"
+    # No top-level try-except for SyntaxError needed anymore, handled per case.
+    # General errors during setup might still occur but are less likely.
 
     return results
 
