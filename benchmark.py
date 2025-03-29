@@ -362,16 +362,21 @@ if __name__ == "__main__":
     # Use ExitStack for robust cleanup of tempdir and container
     with ExitStack() as stack:
         try:
-            # Create TemporaryDirectory for the LLM code
-            temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-            llm_code_filename = "llm_sort.py"
-            llm_code_path_host = os.path.join(temp_dir, llm_code_filename)
-            sandbox_dir = "/sandbox" # Mount point inside container
-            llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
+           # Create TemporaryDirectory for the LLM code and runner script
+           temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
+           llm_code_filename = "llm_sort.py"
+           runner_script_filename = "exec_runner.py" # Filename for the wrapper script
+           llm_code_path_host = os.path.join(temp_dir, llm_code_filename)
+           runner_script_path_host = os.path.join(temp_dir, runner_script_filename) # Host path for runner
+           sandbox_dir = "/sandbox" # Mount point inside container
+           llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
+           runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename}" # Container path for runner
 
-            # Write the generated code to the host file
-            with open(llm_code_path_host, 'w', encoding='utf-8') as f_script:
-                f_script.write(generated_code)
+           # Write the generated code and the runner script to the host temp directory
+           with open(llm_code_path_host, 'w', encoding='utf-8') as f_llm_script:
+               f_llm_script.write(generated_code)
+           with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
+               f_runner_script.write(exec_wrapper_code) # Write the wrapper code to its own file
 
             # Start the container once, keep it running
             print("Starting persistent Docker container...")
@@ -434,10 +439,10 @@ if __name__ == "__main__":
 
                     host_exec_start_time = time.perf_counter() # Host-side timing for exec_run call itself
 
-                    try:
-                        # Command to execute the wrapper script via python -c
-                        # Pass input via stdin=True
-                        exec_command = ["python", "-c", exec_wrapper_code]
+                   try:
+                       # Command to execute the runner script file directly inside the container
+                       # Pass input via stdin=True
+                       exec_command = ["python", runner_script_path_cont] # e.g., ["python", "/sandbox/exec_runner.py"]
 
                         # Use stream=False, demux=False to get combined output as bytes
                         exec_result = container.exec_run(
