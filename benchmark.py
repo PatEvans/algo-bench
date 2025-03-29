@@ -546,11 +546,6 @@ if __name__ == '__main__':
             # Example usage - Load suite first, then run benchmarks
             print("\nRunning example benchmarks with loaded suite...")
 
-            # Run dummy_llm benchmark
-            print("\nRunning dummy_llm benchmark example...")
-            result_llm = run_single_benchmark('dummy_llm', categorized_test_cases=test_suite)
-            print("\nLLM (dummy_llm) Benchmark Result:\n", json.dumps(result_llm, indent=2))
-
             # Run baseline benchmark
             print("\nRunning baseline benchmark example...")
             result_baseline = run_python_sorted_benchmark(categorized_test_cases=test_suite) # Run baseline

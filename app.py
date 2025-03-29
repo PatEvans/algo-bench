@@ -17,7 +17,7 @@ app.secret_key = 'super secret key' # Change this to a random secret key, maybe 
 # --- Constants ---
 TEST_SUITE_FILENAME = benchmark.DEFAULT_TEST_SUITE_FILE # Use the default from benchmark.py
 PYTHON_SORTED_BENCHMARK = "Python sorted()"
-AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "dummy_llm", "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
+AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
 # AVAILABLE_ALGORITHMS removed as specific algorithms are no longer selected
 
 # --- Benchmark Status Tracking ---

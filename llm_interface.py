@@ -24,31 +24,7 @@ def generate_code(llm_name: str, prompt: str) -> str | None:
     """
     print(f"Placeholder: Generating code from {llm_name} with prompt: '{prompt[:50]}...'")
     # Replace with actual API calls to different LLMs
-    if llm_name == "dummy_llm":
-        # Return a simple, non-cheating implementation for testing purposes
-        # when benchmark.py is run directly.
-        # This ignores the actual prompt content for the dummy case.
-        print("Note: dummy_llm returning a fixed simple sort implementation.")
-        return """
-def sort_algorithm(arr):
-    # Simple Bubble Sort implementation (for dummy_llm testing)
-    # Creates a copy to avoid modifying the original list, as required.
-    new_arr = list(arr)
-    n = len(new_arr)
-    if n <= 1:
-        return new_arr
-    for i in range(n):
-        swapped = False
-        for j in range(0, n-i-1):
-            if new_arr[j] > new_arr[j+1]:
-                new_arr[j], new_arr[j+1] = new_arr[j+1], new_arr[j]
-                swapped = True
-        # If no elements were swapped, array is sorted
-        if not swapped:
-            break
-    return new_arr
-"""
-    elif llm_name == "Gemini 2.5 Pro Exp":
+    if llm_name == "Gemini 2.5 Pro Exp":
         if genai is None:
             print("Error: google.generativeai library not installed. Run 'pip install google-generativeai'")
             return None
@@ -115,9 +91,12 @@ def sort_algorithm(arr):
 
 # Example usage (for testing purposes)
 if __name__ == '__main__':
-    test_prompt = "Generate a Python function for bubble sort."
-    generated_code = generate_code("dummy_llm", test_prompt)
-    if generated_code:
-        print("\nGenerated Code:\n", generated_code)
-    else:
+    # Example for Gemini (requires GOOGLE_API_KEY env var and library)
+    # test_prompt = "Generate a Python function for bubble sort."
+    # generated_code = generate_code("Gemini 2.5 Pro Exp", test_prompt)
+    # if generated_code:
+    #     print("\nGenerated Code:\n", generated_code)
+    # else:
+    #     print("Failed to generate code.")
+    print("llm_interface.py executed directly. No default action.")
         print("Failed to generate code.")
