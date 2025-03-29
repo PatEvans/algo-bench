@@ -153,17 +153,23 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
         return results
 
+    # Construct the absolute path to the Docker wrapper script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    wrapper_script_path = os.path.join(script_dir, DOCKER_WRAPPER_SCRIPT_NAME)
+
     # Read the Docker execution wrapper script content
     try:
-        with open(DOCKER_WRAPPER_SCRIPT_NAME, 'r', encoding='utf-8') as f:
+        print(f"Attempting to read wrapper script from: {wrapper_script_path}") # Debug print
+        with open(wrapper_script_path, 'r', encoding='utf-8') as f:
             exec_wrapper_code = f.read()
+        print(f"Successfully read wrapper script: {DOCKER_WRAPPER_SCRIPT_NAME}") # Debug print
     except FileNotFoundError:
-        results['error'] = f"Critical Error: Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' not found."
+        results['error'] = f"Critical Error: Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' not found at expected path: {wrapper_script_path}."
         print(results['error'])
         if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
         return results
     except Exception as e:
-        results['error'] = f"Critical Error: Failed to read Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}': {e}"
+        results['error'] = f"Critical Error: Failed to read Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' from path '{wrapper_script_path}': {e}"
         print(results['error'])
         if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
         return results
