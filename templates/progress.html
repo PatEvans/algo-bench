@@ -131,17 +131,28 @@
                     codeDisplayed = true;
                 }
 
-                // Update progress list only if new items arrived
+                // Update progress list only with new Error or Incorrect items
                 const progressItems = data.progress || [];
-                if (progressItems.length > 0 && progressItems.length !== lastUpdateCount) {
-                    progressListElement.innerHTML = ''; // Clear previous items
-                    // Display in chronological order (oldest first)
-                    progressItems.forEach(item => {
-                        progressListElement.innerHTML += formatProgressItem(item);
+                if (progressItems.length > 0) {
+                    let newItemsAdded = false;
+                    // Iterate through received items and add only new errors/incorrects
+                    progressItems.forEach((item, index) => {
+                        // Use index as a unique identifier for the item within this task's progress deque
+                        if ((item.status === 'Incorrect' || item.status === 'Error') && !displayedErrorIndices.has(index)) {
+                            if (progressListElement.innerHTML.includes('Waiting')) {
+                                progressListElement.innerHTML = ''; // Clear waiting message first time
+                            }
+                            progressListElement.innerHTML += formatProgressItem(item); // Append the formatted item
+                            displayedErrorIndices.add(index); // Mark this index as displayed
+                            newItemsAdded = true;
+                        }
                     });
-                    lastUpdateCount = progressItems.length;
+                    // Scroll to bottom if new items were added
+                    if (newItemsAdded) {
+                         progressListElement.scrollTop = progressListElement.scrollHeight;
+                    }
                 } else if (progressListElement.innerHTML.includes('Waiting')) {
-                     progressListElement.innerHTML = ''; // Clear waiting message if updates start arriving
+                     progressListElement.innerHTML = ''; // Clear waiting message if updates start arriving (even if no errors yet)
                 }
 
 
