@@ -296,27 +296,27 @@ def load_and_run_sort():
         file_path = "/sandbox/llm_sort.py" # Still useful for error messages
         # --- Check if file exists before attempting import ---
         if not os.path.exists(file_path):
-             # List directory contents for debugging if file not found
-             try:
-                 sandbox_contents = os.listdir('/sandbox')
-                 dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
-             except Exception as list_e:
-                 dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-             raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
-       # --- End check --- # Corrected indentation
+            # List directory contents for debugging if file not found
+            try:
+                sandbox_contents = os.listdir('/sandbox')
+                dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
+            except Exception as list_e:
+                dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
+            raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
+        # --- End check ---
 
-       # Import the module directly (should work if workdir=/sandbox) # Corrected indentation
-       try: # Corrected indentation
-           import llm_sort
-       except ModuleNotFoundError: # Corrected indentation
+        # Import the module directly (should work if workdir=/sandbox)
+        try:
+            import llm_sort
+        except ModuleNotFoundError:
             # This shouldn't happen if the file exists and path is set, but catch defensively
             raise ImportError(f"Could not import 'llm_sort' even after adding /sandbox to sys.path.")
-       except Exception as import_err: # Catch other potential import errors (e.g., syntax errors in llm_sort.py) # Corrected indentation
+        except Exception as import_err: # Catch other potential import errors (e.g., syntax errors in llm_sort.py)
             raise ImportError(f"Error importing 'llm_sort': {type(import_err).__name__}: {import_err}")
 
-       # 2. Get the sort_algorithm function # Corrected indentation
-       if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm): # Corrected indentation
-             raise NameError("Function 'sort_algorithm' not found or not callable in imported llm_sort module.")
+        # 2. Get the sort_algorithm function
+        if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm):
+            raise NameError("Function 'sort_algorithm' not found or not callable in imported llm_sort module.")
         sort_algorithm = llm_sort.sort_algorithm
 
         # 3. Read input JSON from stdin
