@@ -316,8 +316,17 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                exit_code = None # Will be determined after stream finishes
 
                print("Streaming output from container...")
-               for stream_type, chunk in exec_stream:
-                   if chunk is None: # Skip empty chunks
+               # Iterate safely, checking for None from the generator
+               for item in exec_stream:
+                   if item is None:
+                       print("WARNING: Received None from exec_stream generator. Assuming stream ended.")
+                       break # Exit the loop if None is received
+
+                   # Now we know item is not None, proceed with unpacking
+                   stream_type, chunk = item
+
+                   # Still check if the chunk itself is None/empty, although less likely now
+                   if chunk is None:
                        continue
 
                    if stream_type == 1: # stdout (final result)
