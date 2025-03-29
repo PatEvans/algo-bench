@@ -1,3 +1,4 @@
 Flask>=2.0
 docker>=6.0 # For running code in isolated containers
-# Add other dependencies here later, e.g., openai, anthropic, google-generativeai
+google-generativeai>=0.4 # Or the specific version you need
+# Add other dependencies here later, e.g., openai, anthropic
