@@ -143,7 +143,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Initializing', 'message': 'Initializing evaluation environment...'})
 
         # Increase timeout for initial connection to Docker daemon
-        docker_client = docker.from_env(timeout=60) # Increased initial connection timeout to 60s
+        docker_client = docker.from_env(timeout=120) # Increased initial connection timeout to 120s
         docker_client.ping() # Verify connection after increasing timeout
         print("Successfully connected to Docker daemon.")
         if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Connecting Docker', 'message': 'Docker client connected.'})
