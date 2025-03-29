@@ -121,9 +121,12 @@ def run_benchmark_background(task_id, llm_name):
             'progress': deque(maxlen=MAX_PROGRESS_UPDATES), # Store recent updates
             'final_result': None,
             'error': None,
-            'generated_code': None, # Add field to store generated code
+            'generated_code': None, # Field to store generated code
             'last_update': time.time()
         }
+
+    generated_code_for_llm = None # Variable to hold generated code if applicable
+    result = None # Variable to hold the final result dict
 
     try:
         # Ensure DB is initialized within this thread's context before saving
@@ -137,46 +140,74 @@ def run_benchmark_background(task_id, llm_name):
         print(f"Task {task_id}: Using pre-loaded test suite.")
         # The test suite is already loaded in GLOBAL_TEST_SUITE
 
-        # --- Run the appropriate benchmark with the loaded test cases ---
+        # --- Generate Code (if LLM) or Run Baseline ---
         if llm_name == PYTHON_SORTED_BENCHMARK:
             # Run benchmark using Python's built-in sorted()
+            # No code generation step needed
+            progress_callback({'status': 'Running Baseline', 'category': 'Setup'})
             result = benchmark.run_python_sorted_benchmark(
                 categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
         else:
-            # Run benchmark using LLM generation
+            # --- Generate Code using LLM ---
+            progress_callback({'status': 'Generating Code', 'category': 'Setup'})
+            prompt_examples = benchmark.generate_prompt_examples(num_examples=5)
+            prompt = benchmark.create_sort_prompt(examples=prompt_examples)
+            print(f"Task {task_id}: Generating code using {llm_name}...")
+            generated_code_for_llm = llm_interface.generate_code(llm_name, prompt)
+
+            if not generated_code_for_llm:
+                raise ValueError("LLM failed to generate code.")
+
+            # --- Update Status with Generated Code BEFORE Evaluation ---
+            with STATUS_LOCK:
+                if task_id in BENCHMARK_STATUS:
+                    BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
+                    BENCHMARK_STATUS[task_id]['status'] = 'Code Generated, Evaluating...'
+                    BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+            # Send an update specifically containing the code
+            progress_callback({
+                'status': 'Code Generated, Evaluating...',
+                'category': 'Setup',
+                'generated_code': generated_code_for_llm
+            })
+            print(f"Task {task_id}: Code generated. Starting evaluation.")
+
+            # --- Run benchmark evaluation using the generated code ---
             result = benchmark.run_single_benchmark(
                 llm_name=llm_name,
+                generated_code=generated_code_for_llm, # Pass the generated code
                 categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
 
-        # --- Store generated code and send update ---
-        # The 'result' dict from run_single_benchmark contains the generated code
-        generated_code_from_llm = result.get('generated_code')
-        if generated_code_from_llm:
-             with STATUS_LOCK:
-                 if task_id in BENCHMARK_STATUS:
-                     BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_from_llm
-             # Send a specific progress update indicating code is ready
-             progress_callback({
-                 'status': 'Code Generated',
-                 'category': 'Setup',
-                 'generated_code': generated_code_from_llm # Include code in this update
-             })
-        # ---------------------------------------------
+        # --- Save final result to DB ---
+        # Ensure the result dict includes the generated code if applicable
+        if generated_code_for_llm and result:
+            result['generated_code'] = generated_code_for_llm
+        elif llm_name == PYTHON_SORTED_BENCHMARK and result:
+             result['generated_code'] = "N/A - Python sorted()" # Ensure baseline has placeholder
 
-        # Save final result to DB (contains evaluation, not just code)
-        database.save_result(result)
+        if result: # Only save if a result was actually produced
+            database.save_result(result)
+        else:
+             # This case might happen if code generation failed before evaluation started
+             print(f"Task {task_id}: No result dictionary generated, skipping database save.")
 
-        # Update final status
+
+        # --- Update final status ---
         with STATUS_LOCK:
             BENCHMARK_STATUS[task_id]['status'] = 'Completed'
-            BENCHMARK_STATUS[task_id]['end_time'] = time.time()
-            BENCHMARK_STATUS[task_id]['final_result'] = result # Store the summary
-            BENCHMARK_STATUS[task_id]['error'] = result.get('error') # Store potential eval errors
-            BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+            if task_id in BENCHMARK_STATUS:
+                BENCHMARK_STATUS[task_id]['status'] = 'Completed'
+                BENCHMARK_STATUS[task_id]['end_time'] = time.time()
+                BENCHMARK_STATUS[task_id]['final_result'] = result # Store the summary
+                BENCHMARK_STATUS[task_id]['error'] = result.get('error') if result else None # Store potential eval errors
+                BENCHMARK_STATUS[task_id]['last_update'] = time.time()
+                # Ensure generated code is in the final status if it exists
+                if generated_code_for_llm:
+                    BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
 
         # Use algorithm_label in the finished message
         print(f"Finished background benchmark task {task_id}: {llm_name} - {algorithm_label}")
@@ -206,13 +237,17 @@ def run_benchmark_background(task_id, llm_name):
             # Lines updating BENCHMARK_STATUS removed from here, handled above in STATUS_LOCK block
             'avg_time_ms': None,
             'baseline_avg_time_ms': None,
-            'performance_details': None, # Add placeholder
-            'generated_code': None
+            'performance_details': None,
+            'generated_code': generated_code_for_llm # Include code if generated before error
         }
         # Also save this minimal error result in the status dict
         with STATUS_LOCK:
              if task_id in BENCHMARK_STATUS:
                  BENCHMARK_STATUS[task_id]['final_result'] = error_result
+                 # Ensure generated code is stored even in error status if available
+                 if generated_code_for_llm:
+                      BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
+
 
         # Try saving to DB (best effort)
         try:
