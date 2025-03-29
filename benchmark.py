@@ -27,7 +27,8 @@ def create_sort_prompt() -> str:
     """Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm."""
     return f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
 
-def generate_test_cases(size_small=10, size_medium=1000, size_large=100000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
+# Increased default sizes for more meaningful timing
+def generate_test_cases(size_small=10, size_medium=10000, size_large=1000000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
     """
     Generates integer test cases based on specified patterns:
     - Randomized (within a range)
