@@ -401,10 +401,10 @@ if __name__ == "__main__":
            for category, test_cases_in_category in categorized_test_cases.items():
                print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
                cat_stats = category_results[category] # Get stats dict for this category
-                num_cases_in_category = len(test_cases_in_category)
+               num_cases_in_category = len(test_cases_in_category)
 
-                for i, test_case in enumerate(test_cases_in_category):
-                    current_overall_case_num += 1
+               for i, test_case in enumerate(test_cases_in_category):
+                   current_overall_case_num += 1
                     overall_total_cases += 1 # Increment overall counter here
                     cat_stats['case_count'] += 1
 
