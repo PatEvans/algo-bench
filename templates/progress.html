@@ -114,8 +114,8 @@
                 const progressItems = data.progress || [];
                 if (progressItems.length > 0 && progressItems.length !== lastUpdateCount) {
                     progressListElement.innerHTML = ''; // Clear previous items
-                    // Display in reverse order (most recent first)
-                    progressItems.slice().reverse().forEach(item => {
+                    // Display in chronological order (oldest first)
+                    progressItems.forEach(item => {
                         progressListElement.innerHTML += formatProgressItem(item);
                     });
                     lastUpdateCount = progressItems.length;
