@@ -456,13 +456,13 @@ if __name__ == "__main__":
 
                        # Decode the output bytes (potential stdout/stderr from python -c itself, plus our JSON)
                        try:
-                             output_str = output_bytes.decode('utf-8', errors='replace').strip()
-                        except Exception as decode_err:
-                             llm_error_str = f"Host failed to decode exec_run output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
-                             output_str = "" # Cannot parse JSON
+                           output_str = output_bytes.decode('utf-8', errors='replace').strip()
+                       except Exception as decode_err:
+                           llm_error_str = f"Host failed to decode exec_run output: {decode_err}. Raw bytes: {repr(output_bytes[:200])}"
+                           output_str = "" # Cannot parse JSON
 
-                        # Attempt to parse the JSON result from the *last line* of the output
-                        parsed_result = None
+                       # Attempt to parse the JSON result from the *last line* of the output
+                       parsed_result = None
                         if output_str and llm_error_str is None:
                             try:
                                 # Find the last line that looks like JSON
