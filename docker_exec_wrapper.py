@@ -69,7 +69,12 @@ def run_all_benchmarks():
         with open(TEST_SUITE_FILE, 'r', encoding='utf-8') as f:
             categorized_test_cases = json.load(f)
         if not categorized_test_cases:
-             raise ValueError("Test suite file is empty or invalid.")
+            raise ValueError("Test suite file is empty or invalid.")
+
+        # Calculate total overall cases beforehand
+        total_overall_cases = sum(len(cases) for cases in categorized_test_cases.values())
+        if total_overall_cases == 0:
+            raise ValueError("Test suite contains no test cases.")
 
         # --- 2. Load LLM Code ---
         if not os.path.exists(LLM_CODE_FILE):
@@ -121,9 +126,10 @@ def run_all_benchmarks():
                     'total_categories': total_categories,
                     'category_case_num': case_num_in_cat,
                     'category_total_cases': num_cases_in_cat,
-                    'current_case': overall_total_cases, # Overall case number
+                    'current_case': current_overall_case_num, # Use the incremented overall counter
+                    'total_cases': total_overall_cases, # Add overall total
                     'input_snippet': input_repr,
-                    'message': f"Running case {case_num_in_cat}/{num_cases_in_cat}..."
+                    'message': f"Running Case {current_overall_case_num}/{total_overall_cases} (Category: {category} {case_num_in_cat}/{num_cases_in_cat})..."
                 })
                 # print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {overall_total_cases}): Input={input_repr}", file=sys.stderr, end='') # Keep simple stderr log too
                 llm_time_sec = None
@@ -162,10 +168,15 @@ def run_all_benchmarks():
                         # Send progress update for case completion (Correct)
                         send_progress({
                             'status': 'Correct',
-                            'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                            'category': category,
+                            'category_case_num': case_num_in_cat, # Keep category info if needed downstream
+                            'category_total_cases': num_cases_in_cat,
+                            'current_case': current_overall_case_num,
+                            'total_cases': total_overall_cases,
                             'llm_time_ms': llm_time_sec * 1000 if llm_time_sec is not None else None,
                             'baseline_time_ms': baseline_time_sec * 1000 if baseline_time_sec is not None else None,
-                            'output_snippet': repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
+                            'output_snippet': repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else ''),
+                            'message': f"Case {current_overall_case_num}/{total_overall_cases} Correct."
                         })
                     else:
                         actual_repr = repr(actual_output[:15]) + ('...' if isinstance(actual_output, list) and len(actual_output) > 15 else '')
@@ -174,11 +185,16 @@ def run_all_benchmarks():
                         # Send progress update for case completion (Incorrect)
                         send_progress({
                             'status': 'Incorrect',
-                            'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                            'category': category,
+                            'category_case_num': case_num_in_cat,
+                            'category_total_cases': num_cases_in_cat,
+                            'current_case': current_overall_case_num,
+                            'total_cases': total_overall_cases,
                             'llm_time_ms': llm_time_sec * 1000 if llm_time_sec is not None else None,
                             'baseline_time_ms': baseline_time_sec * 1000 if baseline_time_sec is not None else None,
                             'output_snippet': actual_repr,
-                            'expected_snippet': expected_repr
+                            'expected_snippet': expected_repr,
+                            'message': f"Case {current_overall_case_num}/{total_overall_cases} Incorrect."
                         })
 
                 except Exception as exec_err:
@@ -189,9 +205,14 @@ def run_all_benchmarks():
                     # Send progress update for case completion (Error)
                     send_progress({
                         'status': 'Error',
-                        'category': category, 'category_case_num': case_num_in_cat, 'current_case': overall_total_cases,
+                        'category': category,
+                        'category_case_num': case_num_in_cat,
+                        'category_total_cases': num_cases_in_cat,
+                        'current_case': current_overall_case_num,
+                        'total_cases': total_overall_cases,
                         'input_snippet': input_snippet_for_error,
-                        'error': case_error
+                        'error': case_error,
+                        'message': f"Case {current_overall_case_num}/{total_overall_cases} Error."
                     })
                     cat_stats['errors'].append({
                         'input_snippet': input_snippet_for_error,
