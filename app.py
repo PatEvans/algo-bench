@@ -33,6 +33,9 @@ def run_benchmark_background(llm_name, algorithm_name):
     """Function to run benchmark in a separate thread."""
     print(f"Starting background benchmark: {llm_name} - {algorithm_name}")
     try:
+        # Ensure DB is initialized within the thread context
+        database.init_db()
+
         if llm_name == PYTHON_SORTED_BENCHMARK:
             # Run benchmark using Python's built-in sorted()
             result = benchmark.run_python_sorted_benchmark(algorithm_name)
