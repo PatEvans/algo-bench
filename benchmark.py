@@ -420,8 +420,11 @@ if __name__ == "__main__":
            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
            print(f"Container {container.short_id} started.")
 
-           # Give container a moment to stabilize (optional, usually not needed for sleep infinity)
-           # time.sleep(1)
+           # --- Add delay for volume mount stabilization ---
+           print("Waiting 2 seconds for volume mount to potentially stabilize...")
+           time.sleep(2)
+           print("Proceeding with execution...")
+           # --- End delay ---
 
            # Iterate through each category and its test cases
            for category, test_cases_in_category in categorized_test_cases.items():
