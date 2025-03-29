@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benchmark Progress</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        #progress-container { margin-top: 20px; border: 1px solid #ccc; padding: 15px; min-height: 200px; background-color: #f9f9f9; }
+        #status { font-weight: bold; margin-bottom: 10px; }
+        #progress-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; font-size: 0.9em; }
+        #progress-list li { border-bottom: 1px dashed #eee; padding: 5px 0; }
+        #progress-list li:last-child { border-bottom: none; }
+        .status-correct { color: green; }
+        .status-incorrect { color: orange; }
+        .status-error { color: red; font-weight: bold; }
+        .status-running { color: blue; }
+        .status-completed { color: green; font-weight: bold; }
+        nav { margin-bottom: 20px; }
+        nav a { margin-right: 15px; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="{{ url_for('index') }}">View Results</a> |
+        <a href="{{ url_for('admin') }}">Run Benchmark</a>
+    </nav>
+
+    <h1>Benchmark Progress</h1>
+    <p>Task ID: <code id="task-id">{{ task_id }}</code></p>
+
+    <div id="progress-container">
+        <div id="status">Status: Initializing...</div>
+        <div id="overall-progress">Progress: 0 / ?</div>
+        <ul id="progress-list">
+            <li>Waiting for updates...</li>
+        </ul>
+        <div id="final-result" style="margin-top: 15px; display: none;">
+            <h2>Final Result</h2>
+            <pre><code id="result-details"></code></pre>
+        </div>
+    </div>
+
+    <script>
+        const taskId = document.getElementById('task-id').textContent;
+        const statusElement = document.getElementById('status');
+        const overallProgressElement = document.getElementById('overall-progress');
+        const progressListElement = document.getElementById('progress-list');
+        const finalResultElement = document.getElementById('final-result');
+        const resultDetailsElement = document.getElementById('result-details');
+        let intervalId = null;
+        let lastUpdateCount = 0;
+
+        function formatProgressItem(item) {
+            let statusClass = '';
+            let statusText = item.status || 'Unknown';
+            if (statusText.startsWith('Correct')) statusClass = 'status-correct';
+            else if (statusText === 'Incorrect') statusClass = 'status-incorrect';
+            else if (statusText === 'Error') statusClass = 'status-error';
+            else if (statusText === 'Running') statusClass = 'status-running';
+
+            let details = `Case ${item.current_case || '?'}/${item.total_cases || '?'}`;
+            if (item.category) {
+                details += ` (Category: ${item.category}`;
+                if (item.category_case_num && item.category_total_cases) {
+                     details += ` ${item.category_case_num}/${item.category_total_cases}`;
+                }
+                 details += `)`;
+            }
+            details += ` - <span class="${statusClass}">${statusText}</span>`;
+            if (item.input_snippet) {
+                details += ` | Input: ${item.input_snippet}`;
+            }
+            if (item.output_snippet) {
+                details += ` | Output: ${item.output_snippet}`;
+            }
+             if (item.error) {
+                details += ` | Error: ${item.error}`;
+            }
+            return `<li>${details}</li>`;
+        }
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch(`/benchmark_status/${taskId}`);
+                if (!response.ok) {
+                    statusElement.textContent = `Status: Error fetching status (${response.status})`;
+                    if (response.status === 404) {
+                         statusElement.textContent = 'Status: Task not found or expired.';
+                         clearInterval(intervalId); // Stop polling if task not found
+                    }
+                    return;
+                }
+                const data = await response.json();
+
+                // Update overall status
+                let displayStatus = data.status || 'Unknown';
+                statusElement.className = ''; // Clear previous classes
+                if (displayStatus === 'Completed') statusElement.classList.add('status-completed');
+                else if (displayStatus === 'Error') statusElement.classList.add('status-error');
+                else statusElement.classList.add('status-running');
+                statusElement.textContent = `Status: ${displayStatus}`;
+
+                if (data.current_case !== null && data.total_cases !== null) {
+                     overallProgressElement.textContent = `Progress: ${data.current_case} / ${data.total_cases}`;
+                } else if (data.current_case !== null) {
+                     overallProgressElement.textContent = `Progress: Case ${data.current_case}`;
+                } else {
+                     overallProgressElement.textContent = `Progress: Waiting...`;
+                }
+
+
+                // Update progress list only if new items arrived
+                const progressItems = data.progress || [];
+                if (progressItems.length > 0 && progressItems.length !== lastUpdateCount) {
+                    progressListElement.innerHTML = ''; // Clear previous items
+                    // Display in reverse order (most recent first)
+                    progressItems.slice().reverse().forEach(item => {
+                        progressListElement.innerHTML += formatProgressItem(item);
+                    });
+                    lastUpdateCount = progressItems.length;
+                } else if (progressListElement.innerHTML.includes('Waiting')) {
+                     progressListElement.innerHTML = ''; // Clear waiting message if updates start arriving
+                }
+
+
+                // Check if task is finished
+                if (data.status === 'Completed' || data.status === 'Error') {
+                    clearInterval(intervalId); // Stop polling
+                    console.log("Benchmark finished. Status:", data.status);
+                    if(data.final_result) {
+                        // Display final summary result nicely formatted
+                        let resultText = `LLM: ${data.llm}\nAlgorithm: ${data.algorithm}\n`;
+                        resultText += `Correctness: ${data.final_result.correctness !== null ? data.final_result.correctness.toFixed(2) + '%' : 'N/A'}\n`;
+                        resultText += `Avg Time (LLM): ${data.final_result.avg_time_ms !== null ? data.final_result.avg_time_ms.toFixed(4) + ' ms' : 'N/A'}\n`;
+                        resultText += `Avg Time (Baseline): ${data.final_result.baseline_avg_time_ms !== null ? data.final_result.baseline_avg_time_ms.toFixed(4) + ' ms' : 'N/A'}\n`;
+                        if (data.final_result.error) {
+                             resultText += `Error: ${data.final_result.error}\n`;
+                        }
+                        // Optionally add performance details summary here too
+                        resultDetailsElement.textContent = resultText;
+                        finalResultElement.style.display = 'block';
+                    } else if (data.error) {
+                         resultDetailsElement.textContent = `Error: ${data.error}`;
+                         finalResultElement.style.display = 'block';
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching status:", error);
+                statusElement.textContent = 'Status: Connection error';
+                // Consider stopping polling on persistent errors
+                // clearInterval(intervalId);
+            }
+        }
+
+        // Start polling
+        intervalId = setInterval(fetchStatus, 1500); // Poll every 1.5 seconds
+        fetchStatus(); // Initial fetch
+
+    </script>
+
+</body>
+</html>
