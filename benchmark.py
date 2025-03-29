@@ -369,10 +369,13 @@ def load_and_run_sort():
 
         # Print the final result dictionary as JSON to the original stdout
         # Ensure output is serializable (it should be if sort_algorithm returns a list)
+        final_output_json = None
         try:
-            print(json.dumps(result))
+            # Attempt to serialize the primary result
+            final_output_json = json.dumps(result)
         except TypeError as json_err:
-            # Fallback if the output itself is not JSON serializable
+            # Fallback if the output or other fields are not JSON serializable
+            print(f"Warning: JSON serialization failed for primary result: {json_err}", file=sys.stderr) # Log warning to stderr
             fallback_result = {
                 'output': repr(result.get('output')), # Use repr as fallback
                 'error': (result.get('error') or "") + f"\\nJSON Serialization Error: {json_err}",
@@ -380,7 +383,18 @@ def load_and_run_sort():
                 'stderr': result.get('stderr'),
                 'exec_time_ms': result.get('exec_time_ms')
             }
-            print(json.dumps(fallback_result))
+            try:
+                # Attempt to serialize the fallback result
+                final_output_json = json.dumps(fallback_result)
+            except Exception as fallback_json_err:
+                # Very unlikely, but catch errors serializing the fallback itself
+                print(f"ERROR: JSON serialization failed even for fallback result: {fallback_json_err}", file=sys.stderr)
+                # Construct a minimal error JSON string manually
+                final_output_json = f'{{"output": null, "error": "FATAL: Could not serialize execution results. Original error hint: {repr(result.get(\\"error\\"))}. Serialization error: {repr(str(fallback_json_err))}", "stdout": null, "stderr": null, "exec_time_ms": {result.get("exec_time_ms", "null")}}}'
+
+        # Print the determined JSON output (either primary, fallback, or minimal error)
+        print(final_output_json)
+
 
 # --- Run the function ---
 if __name__ == "__main__":
