@@ -157,6 +157,38 @@ def generate_test_cases(size_small=10, size_medium=10000, size_large=1000000, nu
     print(f"Generated a total of {total_cases} test cases across {len(cases_by_category)} categories.")
     return dict(cases_by_category) # Convert back to regular dict
 
+
+# --- Test Suite Loading/Saving Functions ---
+
+def load_test_suite(filename: str) -> dict:
+    """Loads the test suite from a JSON file."""
+    print(f"Loading test suite from {filename}...")
+    try:
+        with open(filename, 'r') as f:
+            test_suite = json.load(f)
+        print(f"Successfully loaded test suite from {filename}")
+        return test_suite
+    except FileNotFoundError:
+        print(f"Error: Test suite file '{filename}' not found.")
+        raise # Re-raise to be handled by caller
+    except Exception as e:
+        print(f"Error loading test suite from {filename}: {e}")
+        raise # Re-raise to be handled by caller
+
+def generate_and_save_test_suite(filename: str, **kwargs):
+    """Generates test cases using generate_test_cases and saves them to a JSON file."""
+    print(f"Generating test suite with params {kwargs} and saving to {filename}")
+    try:
+        test_cases = generate_test_cases(**kwargs)
+        with open(filename, 'w') as f:
+            json.dump(test_cases, f, indent=2)
+        print(f"Successfully generated and saved test suite to {filename}")
+    except Exception as e:
+        print(f"Error generating or saving test suite to {filename}: {e}")
+        raise # Re-raise to be handled by caller
+
+# --- Evaluation Logic ---
+
 def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
     """
     Evaluates the generated sorting algorithm code using provided test cases, optionally reporting progress.
