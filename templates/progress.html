@@ -116,6 +116,12 @@
                      overallProgressElement.textContent = `Progress: Waiting...`;
                 }
 
+                // Display generated code if available and not already shown
+                if (!codeDisplayed && data.generated_code) {
+                    generatedCodeContent.textContent = data.generated_code;
+                    generatedCodeArea.style.display = 'block';
+                    codeDisplayed = true;
+                }
 
                 // Update progress list only if new items arrived
                 const progressItems = data.progress || [];
