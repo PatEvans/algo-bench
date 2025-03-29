@@ -97,6 +97,7 @@ def run_all_benchmarks():
         # --- 3. Iterate and Evaluate Test Cases ---
         total_categories = len(categorized_test_cases)
         current_category_num = 0
+        current_overall_case_num = 0 # Initialize overall counter before the loop
         for category, test_cases_in_category in categorized_test_cases.items():
             current_category_num += 1
             cat_stats = category_results[category]
