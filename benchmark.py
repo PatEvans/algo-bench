@@ -23,6 +23,7 @@ from requests.exceptions import ConnectionError as DockerConnectionError # For D
 from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
 import tarfile # To create tar archives for copying into container
 import io # To handle in-memory tar archive
+import textwrap # To dedent the wrapper code string
 
 # Using Docker containers provides better isolation than subprocess.
 
@@ -407,7 +408,8 @@ if __name__ == "__main__":
            with open(llm_code_path_host, 'w', encoding='utf-8') as f_llm_script:
                f_llm_script.write(generated_code)
            with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
-               f_runner_script.write(exec_wrapper_code) # Write the wrapper code to its own file
+               # Dedent the wrapper code before writing to handle potential indentation issues
+               f_runner_script.write(textwrap.dedent(exec_wrapper_code))
 
            # --- DEBUG: Check if files exist on host before mount ---
            llm_exists = os.path.exists(llm_code_path_host)
