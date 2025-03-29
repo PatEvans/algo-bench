@@ -303,23 +303,35 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            exec_error = None
 
            try:
-               # Use exec_run with stream=True, demux=True to get separate stdout/stderr
-               exec_stream = container.exec_run(
+               # Use lower-level API to get exec_id before streaming
+               exec_create_resp = docker_client.api.exec_create(
+                   container=container.id,
                    cmd=exec_command,
-                   stream=True,
-                   demux=True, # Separate stdout (1) and stderr (2)
                    workdir=sandbox_dir,
+                   stdout=True,
+                   stderr=True,
+                   tty=False # Important: TTY should be False for demux=True to work correctly
+               )
+               exec_id = exec_create_resp['Id']
+
+               # Start the execution and get the stream
+               exec_stream_generator = docker_client.api.exec_start(
+                   exec_id=exec_id,
+                   stream=True,
+                   demux=True # Separate stdout (1) and stderr (2)
                )
 
                stdout_acc = b""
                stderr_buffer = b"" # Buffer for potentially incomplete stderr lines
                exit_code = None # Will be determined after stream finishes
 
-               print("Streaming output from container...")
+               print(f"Streaming output from container exec_id: {exec_id}...")
                # Iterate safely, checking for None from the generator
-               for item in exec_stream:
+               # Note: exec_start returns a generator directly
+               for item in exec_stream_generator:
                    if item is None:
-                       print("WARNING: Received None from exec_stream generator. Assuming stream ended.")
+                       # This condition might still be relevant depending on Docker API behavior
+                       print(f"WARNING: Received None from exec_start stream generator (exec_id: {exec_id}). Assuming stream ended.")
                        break # Exit the loop if None is received
 
                    # Now we know item is not None, proceed with unpacking
@@ -353,11 +365,11 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                            except Exception as cb_err:
                                print(f"ERROR: Progress callback failed: {cb_err}")
 
-               # --- Stream finished, now inspect exit code and parse final result ---
-               exec_inspect = docker_client.api.exec_inspect(exec_stream.exec_id) # Use exec_id from stream object
+               # --- Stream finished, now inspect exit code using the saved exec_id ---
+               exec_inspect = docker_client.api.exec_inspect(exec_id) # Use the saved exec_id
                exit_code = exec_inspect.get('ExitCode')
 
-               # Handle potential None exit code (retry logic might be needed again if observed)
+               # Handle potential None exit code
                if exit_code is None:
                    print(f"WARNING: exec_inspect returned ExitCode=None immediately after stream finished. Inspect: {exec_inspect}")
                    # Optionally add a small delay and retry inspect here if needed
