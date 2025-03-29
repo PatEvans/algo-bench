@@ -32,7 +32,7 @@
                     <th>Benchmark Type</th> <!-- Changed Header -->
                     <th>Correctness (%)</th>
                     <th>LLM Avg. Time (ms) (Overall)</th>
-                    <th>Performance Details (Category: Correctness%, LLM ms, Baseline ms, Count)</th>
+                    <th>Details</th>
                     <th>Error</th>
                     <!-- Optional: Add column for viewing code -->
                 </tr>
@@ -46,24 +46,27 @@
                         <td>{{ '%.2f'|format(result.correctness) if result.correctness is not none else 'N/A' }}</td>
                         <td>{{ '%.4f'|format(result.avg_time_ms) if result.avg_time_ms is not none else 'N/A' }}</td>
                         <td>
-                            {% if result.performance_details %}
-                                <ul style="margin: 0; padding-left: 15px; font-size: 0.9em;">
-                                {% for category, details in result.performance_details.items()|sort %}
-                                    <li>
-                                        <strong>{{ category }}:</strong>
-                                        {{ '%.1f'|format(details.correctness) if details.correctness is not none else 'N/A' }}%,
-                                        LLM: {{ '%.2f'|format(details.avg_time_ms) if details.avg_time_ms is not none else 'N/A' }}ms,
-                                        Base: {{ '%.2f'|format(details.baseline_avg_time_ms) if details.baseline_avg_time_ms is not none else 'N/A' }}ms
-                                        ({{ details.count }} cases)
-                                    </li>
-                                {% else %}
-                                    <li>No detailed data available.</li>
-                                {% endfor %}
-                                </ul>
+                            {% if result.performance_details and result.performance_details is mapping %} {# Check if it's a dictionary-like object #}
+                                <details>
+                                    <summary style="cursor: pointer;">View Details</summary>
+                                    <ul style="margin: 5px 0 0 0; padding-left: 20px; font-size: 0.9em;">
+                                    {% for category, details in result.performance_details.items()|sort %}
+                                        <li>
+                                            <strong>{{ category }}:</strong>
+                                            {{ '%.1f'|format(details.correctness) if details.correctness is not none else 'N/A' }}%,
+                                            LLM: {{ '%.2f'|format(details.avg_time_ms) if details.avg_time_ms is not none else 'N/A' }}ms,
+                                            Base: {{ '%.2f'|format(details.baseline_avg_time_ms) if details.baseline_avg_time_ms is not none else 'N/A' }}ms
+                                            ({{ details.count }} cases)
+                                        </li>
+                                    {% else %}
+                                        <li>No detailed data available.</li>
+                                    {% endfor %}
+                                    </ul>
+                                </details>
                             {% elif result.performance_details is none %}
                                 N/A
                             {% else %}
-                                {{ result.performance_details }} {# Display raw data if it's not None but not a dict #}
+                                {{ result.performance_details }} {# Display raw data if it's not None and not a dict #}
                             {% endif %}
                         </td>
                         <td class="{{ 'error' if result.error else '' }}">{{ result.error if result.error else 'None' }}</td>
