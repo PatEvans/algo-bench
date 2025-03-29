@@ -55,7 +55,13 @@ def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = N
     Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm,
     optionally including examples.
     """
-    base_prompt = f"Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.). The function should take a list of numbers as input and return a new sorted list. Do not use the built-in sorted() function or .sort() method."
+    base_prompt = (
+        "Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm "
+        "suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.).\n"
+        "The function MUST take a list of numbers as input and return a new sorted list.\n"
+        "IMPORTANT: The function MUST NOT use the built-in sorted() function or the .sort() method.\n"
+        "IMPORTANT: The function MUST NOT print anything to standard output. It should ONLY return the sorted list."
+    )
 
     if examples:
         example_str = "\n\nHere are some examples of how the function should behave:\n"
