@@ -406,6 +406,8 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                                    _sock_low_level.close()
                                if _sock: # Close the high-level wrapper too
                                    _sock.close()
+                           # Pass statement added to potentially resolve parser confusion after inner finally
+                           pass
 
                        host_exec_end_time = time.perf_counter() # Timing remains similar
 
