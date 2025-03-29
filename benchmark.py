@@ -463,7 +463,7 @@ if __name__ == "__main__":
 
                        # Attempt to parse the JSON result from the *last line* of the output
                        parsed_result = None
-                        if output_str and llm_error_str is None:
+                       if output_str and llm_error_str is None:
                             try:
                                 # Find the last line that looks like JSON
                                 last_line = output_str.splitlines()[-1]
@@ -474,25 +474,25 @@ if __name__ == "__main__":
                                 llm_error_str = f"Unexpected error parsing exec_run output: {parse_e}. Full output:\n---\n{output_str[:1000]}\n---"
 
                         # --- Process the parsed result ---
-                        if llm_error_str: # If host-level parsing failed
+                       if llm_error_str: # If host-level parsing failed
                             pass # Error already set
-                        elif exit_code is None:
+                       elif exit_code is None:
                              llm_error_str = f"exec_run did not return an exit code (may indicate timeout or Docker issue)."
-                        elif exit_code != 0:
+                       elif exit_code != 0:
                              llm_error_str = f"Exec wrapper exited with code {exit_code}."
                              # Append JSON error if available, otherwise append raw output
                              if parsed_result and parsed_result.get('error'):
                                  llm_error_str += f" Internal error:\n---\n{parsed_result['error']}\n---"
                              elif output_str:
                                  llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
-                        elif parsed_result is None:
+                       elif parsed_result is None:
                              # Should not happen if exit code is 0 and no parsing error occurred, but check defensively
                              llm_error_str = "Exec wrapper exited code 0 but host failed to parse JSON result."
                              if output_str: llm_error_str += f" Raw output:\n---\n{output_str[:1000]}\n---"
-                        elif parsed_result.get('error'):
+                       elif parsed_result.get('error'):
                              # Exit code 0, but the script internally caught an error
                              llm_error_str = f"Exec wrapper reported internal error:\n---\n{parsed_result['error']}\n---"
-                        else:
+                       else:
                              # --- Success Case ---
                              actual_output = parsed_result.get('output')
                              current_llm_time_ms = parsed_result.get('exec_time_ms') # Use time measured inside container
