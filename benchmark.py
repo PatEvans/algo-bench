@@ -496,7 +496,6 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
 
     return results
 
-
 # Note: algorithm_name parameter is removed. We use the constant BENCHMARKED_ALGORITHM_LABEL internally.
 # Now accepts pre-generated code.
 def run_single_benchmark(llm_name: str, generated_code: str, categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
@@ -548,8 +547,6 @@ def run_single_benchmark(llm_name: str, generated_code: str, categorized_test_ca
 
 # Note: The __main__ block below is for standalone testing/example usage of benchmark.py.
 # Test suite generation is now handled by test_suite_generator.py.
-# The native baseline run is removed; use the Docker baseline via app.py instead.
-
 if __name__ == '__main__':
     # Import argparse here as it's only needed for CLI execution
     import argparse

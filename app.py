@@ -140,6 +140,7 @@ def run_benchmark_background(task_id, llm_name):
     generated_code_for_llm = None # Variable to hold generated code if applicable
     result = None # Variable to hold the final result dict
 
+
     try:
         # Ensure DB is initialized within this thread's context before saving
         database.init_db()
