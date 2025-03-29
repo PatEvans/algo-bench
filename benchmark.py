@@ -407,13 +407,13 @@ if __name__ == "__main__":
                        'current_case': current_overall_case_num,
                        'total_cases': total_overall_cases_calculated,
                        'category': category,
-                        'category_case_num': i + 1,
-                        'category_total_cases': num_cases_in_category,
-                        'status': 'Running',
-                        'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
-                        'output_snippet': None,
-                        'error': None
-                    }
+                       'category_case_num': i + 1,
+                       'category_total_cases': num_cases_in_category,
+                       'status': 'Running',
+                       'input_snippet': repr(test_case[:10]) + ('...' if len(test_case) > 10 else ''),
+                       'output_snippet': None,
+                       'error': None
+                   }
                    if progress_callback:
                        progress_callback(progress_data) # Report start of case processing
 
@@ -518,42 +518,42 @@ if __name__ == "__main__":
                                  # Optionally capture the incorrect output in llm_error_str for reporting?
                                  # llm_error_str = f"Incorrect output. Expected: {expected_repr}, Got: {actual_repr}"
 
-
-                    # Catch host-side errors during exec_run call itself
-                    except (APIError, DockerConnectionError) as docker_exec_err:
-                        llm_error_str = f"Docker API/Connection error during exec_run: {docker_exec_err}"
-                        # This might be fatal for subsequent calls, consider aborting? For now, report per case.
-                    except Exception as host_exec_e:
-                        llm_error_str = f"Host error during container exec_run setup or call: {host_exec_e}"
-
-
-                    # --- Handle LLM Run Outcome for this case ---
-                    if llm_error_str:
-                        test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                        print(f"    Error during LLM sort execution: Input={test_repr}, Error={llm_error_str}")
-                        if progress_callback:
-                            progress_data['status'] = 'Error'
-                            progress_data['error'] = llm_error_str
-                            progress_callback(progress_data)
-                    elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
-                         progress_callback(progress_data)
+                   # Catch host-side errors during exec_run call itself
+                   except (APIError, DockerConnectionError) as docker_exec_err:
+                       llm_error_str = f"Docker API/Connection error during exec_run: {docker_exec_err}"
+                       # This might be fatal for subsequent calls, consider aborting? For now, report per case.
+                   except Exception as host_exec_e:
+                       llm_error_str = f"Host error during container exec_run setup or call: {host_exec_e}"
 
 
-                    # --- Time Python's built-in sorted() ---
-                    baseline_start_time = time.perf_counter()
-                    current_baseline_time = None
-                    try:
-                        _ = sorted(baseline_input) # Execute baseline sort
-                        baseline_end_time = time.perf_counter()
-                        current_baseline_time = baseline_end_time - baseline_start_time
-                        overall_baseline_time += current_baseline_time
-                        cat_stats['baseline_time'] += current_baseline_time
-                    except Exception as e:
-                        test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                        print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
-                        # Decide how to handle baseline errors (e.g., skip timing for this case?)
+                   # --- Handle LLM Run Outcome for this case ---
+                   if llm_error_str:
+                       test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                       print(f"    Error during LLM sort execution: Input={test_repr}, Error={llm_error_str}")
+                       if progress_callback:
+                           progress_data['status'] = 'Error'
+                           progress_data['error'] = llm_error_str
+                           progress_callback(progress_data)
+                   elif progress_callback: # If no error, update progress (Correct/Incorrect status set above)
+                       progress_callback(progress_data)
 
-        # --- End of loop over categories/cases ---
+
+                   # --- Time Python's built-in sorted() ---
+                   baseline_start_time = time.perf_counter()
+                   current_baseline_time = None
+                   try:
+                       _ = sorted(baseline_input) # Execute baseline sort
+                       baseline_end_time = time.perf_counter()
+                       current_baseline_time = baseline_end_time - baseline_start_time
+                       overall_baseline_time += current_baseline_time
+                       cat_stats['baseline_time'] += current_baseline_time
+                   except Exception as e:
+                       test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                       print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
+                       # Decide how to handle baseline errors (e.g., skip timing for this case?)
+
+               # --- End of loop over test cases within a category ---
+           # --- End of loop over categories ---
 
         # Catch errors during the initial container setup phase
         except (APIError, DockerConnectionError) as docker_setup_err:
