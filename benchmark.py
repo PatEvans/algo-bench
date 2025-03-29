@@ -140,24 +140,24 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
     docker_client = None
     try:
         # Signal start of evaluation process
-        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Initializing evaluation environment...'})
+        if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Initializing', 'message': 'Initializing evaluation environment...'})
 
         docker_client = docker.from_env(timeout=10)
         docker_client.ping()
         print("Successfully connected to Docker daemon.")
-        if progress_callback: progress_callback({'status': 'Setup', 'message': 'Docker client connected.'}) # Changed message
+        if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Connecting Docker', 'message': 'Docker client connected.'})
         # Ensure image exists
         try:
             docker_client.images.get(DOCKER_IMAGE)
             print(f"Docker image {DOCKER_IMAGE} found locally.")
-            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image ready ({DOCKER_IMAGE}).'}) # Changed message
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Checking Image', 'message': f'Docker image ready ({DOCKER_IMAGE}).'})
         except ImageNotFound:
             print(f"Pulling Docker image: {DOCKER_IMAGE}...")
             # Keep this message as pulling can take time
-            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Pulling Docker image {DOCKER_IMAGE}...'})
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Pulling Image', 'message': f'Pulling Docker image {DOCKER_IMAGE}...'})
             docker_client.images.pull(DOCKER_IMAGE)
             print(f"Docker image {DOCKER_IMAGE} pulled.")
-            if progress_callback: progress_callback({'status': 'Setup', 'message': f'Docker image pulled ({DOCKER_IMAGE}).'}) # Changed message
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Image Pulled', 'message': f'Docker image pulled ({DOCKER_IMAGE}).'})
         print(f"Using Docker image: {DOCKER_IMAGE}")
     except (DockerConnectionError, APIError, Exception) as e:
         results['error'] = f"Docker initialization failed: {e}. Is Docker running?"
@@ -259,7 +259,7 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Ensure container is stopped and removed at the end
            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
            print(f"Container {container.short_id} started.")
-           if progress_callback: progress_callback({'status': 'Setup', 'message': f'Container started ({container.short_id}).'}) # Changed message
+           if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Starting Container', 'message': f'Container started ({container.short_id}).'})
 
            # --- Create sandbox directory inside container ---
            # Although working_dir is set, explicitly create it for clarity and put_archive target
@@ -282,19 +282,20 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
            # Copy the archive to the container
            container.put_archive(path=sandbox_dir, data=tar_stream)
            print("Files copied.")
-           if progress_callback: progress_callback({'status': 'Setup', 'message': 'Benchmark files copied to container.'}) # Changed message
+           if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Copying Files', 'message': 'Benchmark files copied to container.'})
 
            # Optional: Short delay after copy might still be beneficial? Unlikely needed now.
            # time.sleep(0.1)
 
            # --- Execute the wrapper script ONCE inside the container ---
            print(f"Executing wrapper script {runner_script_path_cont} in container...")
+           # This is the final setup step before execution starts
            if progress_callback:
                progress_callback({
-                   'status': 'Running',
-                   'category': 'Executing All Cases',
+                   'status': 'Running', # Change status to Running here
+                   'category': 'Executing All Cases', # Keep category general for the main run
                    'total_cases': total_overall_cases_calculated,
-                   'message': 'Running all test cases within the container...'
+                   'message': 'Starting execution of all test cases in container...' # Updated message
                })
 
            exec_command = ["python", runner_script_path_cont]
