@@ -193,36 +193,52 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
     # Aggregators for per-category results
     category_results = defaultdict(lambda: {'correct_count': 0, 'llm_time': 0, 'baseline_time': 0, 'case_count': 0, 'llm_runs_timed': 0})
 
+    # Define the boilerplate code for the temporary script
+    # This code reads JSON from stdin, calls sort_algorithm, and prints JSON to stdout
+    script_boilerplate_header = """
+import sys
+import json
+
+# --- Start of LLM Generated Code ---
+"""
+    script_boilerplate_footer = """
+# --- End of LLM Generated Code ---
+
+if __name__ == "__main__":
+    exit_code = 0
     try:
-        # !!! SECURITY WARNING !!!
-        # Executing arbitrary code from LLMs is highly risky.
-        # `exec` is used here for simplicity but is NOT SAFE for production.
-        # A proper sandboxing mechanism (e.g., Docker containers, restricted Python interpreters)
-        # is essential to prevent malicious code execution.
-        local_namespace = {}
-        exec(generated_code, {}, local_namespace)
+        input_data_json = sys.stdin.read()
+        input_list = json.loads(input_data_json)
+        # Check if sort_algorithm function exists before calling
+        if 'sort_algorithm' in locals() and callable(sort_algorithm):
+            output_list = sort_algorithm(input_list)
+            print(json.dumps(output_list)) # Output result as JSON to stdout
+        else:
+             raise NameError("Function 'sort_algorithm' not found or not callable in generated code.")
+    except Exception as e:
+        print(f"Error in generated script execution: {e}", file=sys.stderr) # Report errors to stderr
+        exit_code = 1 # Indicate failure
+    sys.exit(exit_code)
+"""
 
-        if 'sort_algorithm' not in local_namespace or not callable(local_namespace['sort_algorithm']):
-            results['error'] = "Generated code does not contain a callable function named 'sort_algorithm'."
-            return results
+    # Calculate total cases for progress reporting
+    total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
+    current_overall_case_num = 0
+    # Define a timeout for each subprocess run (e.g., 30 seconds)
+    # Adjust as needed based on expected execution time and test case sizes
+    SUBPROCESS_TIMEOUT = 30.0
 
-        sort_func = local_namespace['sort_algorithm']
+    # Iterate through each category and its test cases
+    for category, test_cases_in_category in categorized_test_cases.items():
+        print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
+        cat_stats = category_results[category] # Get stats dict for this category
+        num_cases_in_category = len(test_cases_in_category)
 
-        # Calculate total cases for progress reporting
-        total_overall_cases_calculated = sum(len(cases) for cases in categorized_test_cases.values())
-        current_overall_case_num = 0
+        for i, test_case in enumerate(test_cases_in_category):
+            current_overall_case_num += 1
+            cat_stats['case_count'] += 1 # Increment here to match overall count logic
 
-        # Iterate through each category and its test cases
-        for category, test_cases_in_category in categorized_test_cases.items():
-            print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
-            cat_stats = category_results[category] # Get stats dict for this category
-            num_cases_in_category = len(test_cases_in_category)
-
-            for i, test_case in enumerate(test_cases_in_category):
-                current_overall_case_num += 1
-                cat_stats['case_count'] += 1 # Increment here to match overall count logic
-
-                # --- Prepare data for callback ---
+            # --- Prepare data for callback ---
                 progress_data = {
                     'current_case': current_overall_case_num,
                     'total_cases': total_overall_cases_calculated,
