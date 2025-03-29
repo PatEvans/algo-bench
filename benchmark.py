@@ -260,34 +260,38 @@ def load_and_run_sort():
     sys.stdout = captured_stdout
     sys.stderr = captured_stderr
 
-   start_time = time.perf_counter()
+    start_time = time.perf_counter()
 
-   try:
-       # 1. Load the llm_sort module dynamically
-       module_name = "llm_sort"
-       file_path = "/sandbox/llm_sort.py" # Path inside container
-       # --- Check if file exists before attempting import ---
-       if not os.path.exists(file_path):
-           # List directory contents for debugging if file not found
-           try:
-               sandbox_contents = os.listdir('/sandbox')
-               dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
-           except Exception as list_e:
-               dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-           raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
-       # --- End check ---
+    try:
+        # 1. Add sandbox to path and import llm_sort directly
+        file_path = "/sandbox/llm_sort.py" # Still useful for error messages
+        # --- Check if file exists before attempting import ---
+        if not os.path.exists(file_path):
+             # List directory contents for debugging if file not found
+             try:
+                 sandbox_contents = os.listdir('/sandbox')
+                 dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
+             except Exception as list_e:
+                 dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
+             raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
+        # --- End check ---
 
-       spec = importlib.util.spec_from_file_location(module_name, file_path)
-       if spec is None or spec.loader is None:
-            raise ImportError(f"Could not create module spec for {file_path}")
-        llm_module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = llm_module # Add to sys.modules before execution
-        spec.loader.exec_module(llm_module)
+        # Add /sandbox to the beginning of the Python path
+        sys.path.insert(0, '/sandbox')
+
+        # Import the module directly
+        try:
+            import llm_sort
+        except ModuleNotFoundError:
+             # This shouldn't happen if the file exists and path is set, but catch defensively
+             raise ImportError(f"Could not import 'llm_sort' even after adding /sandbox to sys.path.")
+        except Exception as import_err: # Catch other potential import errors (e.g., syntax errors in llm_sort.py)
+             raise ImportError(f"Error importing 'llm_sort': {type(import_err).__name__}: {import_err}")
 
         # 2. Get the sort_algorithm function
-        if not hasattr(llm_module, 'sort_algorithm') or not callable(llm_module.sort_algorithm):
-             raise NameError("Function 'sort_algorithm' not found or not callable in llm_sort.py")
-        sort_algorithm = llm_module.sort_algorithm
+        if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm):
+             raise NameError("Function 'sort_algorithm' not found or not callable in imported llm_sort module.")
+        sort_algorithm = llm_sort.sort_algorithm
 
         # 3. Read input JSON from stdin
         input_data_json = sys.stdin.read()
