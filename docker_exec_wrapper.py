@@ -45,7 +45,7 @@ def load_and_run_sort():
                 dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
             except Exception as list_e:
                dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-           raise FileNotFoundError(
+            raise FileNotFoundError(
                f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}"
            )
        # --- End check ---
@@ -139,10 +139,9 @@ def load_and_run_sort():
                )
 
        # Print the determined JSON output (either primary, fallback, or minimal error)
-       print(final_output_json)
+        print(final_output_json)
 
 
 # --- Run the function ---
 if __name__ == "__main__":
     load_and_run_sort()
-```
