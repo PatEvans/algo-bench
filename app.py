@@ -84,11 +84,18 @@ def run_benchmark_background(task_id, llm_name):
         # database.init_db() # Already called at startup and potentially problematic here if DB file is locked
 
         if llm_name == PYTHON_SORTED_BENCHMARK:
-            # Run benchmark using Python's built-in sorted() - no algorithm name needed
-            result = benchmark.run_python_sorted_benchmark(progress_callback=progress_callback)
+            # Run benchmark using Python's built-in sorted(), passing the loaded test suite
+            result = benchmark.run_python_sorted_benchmark(
+                categorized_test_cases=PRECOMPUTED_TEST_SUITE,
+                progress_callback=progress_callback
+            )
         else:
-            # Run benchmark using LLM generation - no algorithm name needed
-            result = benchmark.run_single_benchmark(llm_name, progress_callback=progress_callback)
+            # Run benchmark using LLM generation, passing the loaded test suite
+            result = benchmark.run_single_benchmark(
+                llm_name=llm_name,
+                categorized_test_cases=PRECOMPUTED_TEST_SUITE,
+                progress_callback=progress_callback
+            )
 
 
         # Save final result to DB
