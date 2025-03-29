@@ -455,8 +455,12 @@ if __name__ == "__main__":
                     llm_start_time = time.perf_counter()
 
                     # Command with a loop to wait for the script file to appear in the volume mount
-                    wait_timeout_seconds = 5 # How long to wait for the script file inside the container
+                    wait_timeout_seconds = 10 # Increased timeout
                     wait_command = f"""
+                    echo '--- Listing /sandbox contents before wait: ---' >&2
+                    ls -la /sandbox >&2
+                    echo '--- End of /sandbox listing ---' >&2
+
                     timeout_seconds={wait_timeout_seconds}
                     start_time=$(date +%s)
                     echo '--- Container waiting for {script_path_cont}... ---' >&2
