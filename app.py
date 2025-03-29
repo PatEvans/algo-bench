@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import database
 import benchmark
+import test_suite_generator # Import the new module
 import llm_interface # Import the missing module
 import threading
 import uuid # For generating unique task IDs
@@ -14,7 +15,8 @@ app = Flask(__name__)
 app.secret_key = 'super secret key' # Change this to a random secret key, maybe from env var
 
 # --- Constants ---
-TEST_SUITE_FILENAME = benchmark.DEFAULT_TEST_SUITE_FILE # Use the default from benchmark.py
+# Use the default from the test_suite_generator module
+TEST_SUITE_FILENAME = test_suite_generator.DEFAULT_TEST_SUITE_FILE
 PYTHON_SORTED_BENCHMARK = "Python sorted()"
 EXAMPLE_CODE_OPTION = "Example Code"
 # Define the example code snippet (e.g., a simple bubble sort)
@@ -70,13 +72,15 @@ def initialize_test_suite():
                 'size_large': 2000000,
                 'num_cases_per_type': 5
             }
-            benchmark.generate_and_save_test_suite(TEST_SUITE_FILENAME, **gen_params)
+            # Use the function from the new module
+            test_suite_generator.generate_and_save_test_suite(TEST_SUITE_FILENAME, **gen_params)
             print(f"Test suite generated and saved to '{TEST_SUITE_FILENAME}'.")
         else:
             print(f"Using existing test suite file: '{TEST_SUITE_FILENAME}'")
 
         print("Loading test suite...")
-        GLOBAL_TEST_SUITE = benchmark.load_test_suite(TEST_SUITE_FILENAME)
+        # Use the function from the new module
+        GLOBAL_TEST_SUITE = test_suite_generator.load_test_suite(TEST_SUITE_FILENAME)
         print(f"Test suite loaded successfully ({len(GLOBAL_TEST_SUITE)} categories).")
         TEST_SUITE_LOAD_ERROR = None # Clear any previous error
     except Exception as e:
@@ -169,9 +173,11 @@ def run_benchmark_background(task_id, llm_name):
         if llm_name == PYTHON_SORTED_BENCHMARK:
             # Run benchmark using Python's built-in sorted()
             progress_callback({'status': 'Running Baseline', 'category': 'Setup'})
+            # Pass the identifier defined in this app
             result = benchmark.run_python_sorted_benchmark(
                 categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                python_sorted_identifier=PYTHON_SORTED_BENCHMARK
             )
         elif llm_name == EXAMPLE_CODE_OPTION:
              # --- Use Example Code ---

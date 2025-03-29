@@ -3,33 +3,36 @@ Module for benchmarking LLM-generated sorting algorithms.
 
 Handles:
 - Generating prompts for LLMs.
-- Safely executing the generated code.
+- Safely executing the generated code within Docker.
 - Evaluating correctness and performance.
 """
 
 import time
-import random
 import llm_interface
 import json
 import tempfile # For creating temporary files AND directories
 import os # For file path operations
 from collections import defaultdict
-import time # Used within functions
 from typing import Callable, Optional, Any # For type hinting the callback
-# Note: 'io' and 'sys' are used within the exec_wrapper_code string
 import docker # For Docker interaction
 from docker.errors import APIError, ImageNotFound, ContainerError # Specific Docker errors
 from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
 from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
 import tarfile # To create tar archives for copying into container
 import io # To handle in-memory tar archive
-import textwrap # To dedent the wrapper code string
 import socket # For socket operations with exec_run
+
+# Import functions from the new test suite generator module
+import test_suite_generator
 
 # Using Docker containers provides better isolation than subprocess.
 
 # Constant for the generic algorithm name
 GENERAL_ALGORITHM_NAME = "LLM General Sort"
+# Constant for the baseline benchmark label
+BASELINE_ALGORITHM_NAME = "Python sorted() Baseline"
+# Constant for the filename of the docker wrapper script
+DOCKER_WRAPPER_SCRIPT_NAME = "docker_exec_wrapper.py"
 
 def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[list[int], list[int]]]:
     """Generates small input/output examples for the LLM prompt."""
@@ -73,123 +76,7 @@ def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = N
     else:
         return base_prompt
 
-# Increased default sizes for more meaningful timing
-def generate_test_cases(size_small=10, size_medium=10000, size_large=1000000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
-    """
-    Generates integer test cases based on specified patterns:
-    - Randomized (within a range)
-    - Duplicates (many repeating elements)
-    - Sorted (ascending)
-    - Reversed (descending)
-    - Nearly Sorted (a few elements swapped)
-
-    Args:
-        size_small: Size for small test cases.
-        size_medium: Size for medium test cases.
-        size_large: Size for large test cases.
-        num_cases_per_type: Number of random/duplicate/nearly sorted cases per size.
-
-    Returns:
-        A dictionary where keys are category names (e.g., "random_small", "sorted_large")
-        and values are lists containing the test case lists for that category.
-    """
-    cases_by_category = defaultdict(list)
-    cases_by_category['special_empty'] = [[]]
-    cases_by_category['special_single'] = [[5]]
-
-    sizes = {'small': size_small, 'medium': size_medium, 'large': size_large}
-    min_val, max_val = -10000, 10000
-
-    total_cases = 2 # Start with empty and single
-
-    for name, size in sizes.items():
-        if size == 0: continue
-
-        print(f"Generating cases for size: {name} ({size})...")
-
-        # 1. Randomized
-        cat_random = f"random_{name}"
-        for i in range(num_cases_per_type):
-            random_case = [random.randint(min_val, max_val) for _ in range(size)]
-            cases_by_category[cat_random].append(random_case)
-            print(f"  - Added {cat_random} case {i+1}")
-            total_cases += 1
-
-        # 2. With Duplicates
-        cat_duplicates = f"duplicates_{name}"
-        duplicate_range_max = max(1, size // 10)
-        for i in range(num_cases_per_type):
-            duplicate_case = [random.randint(0, duplicate_range_max) for _ in range(size)]
-            cases_by_category[cat_duplicates].append(duplicate_case)
-            print(f"  - Added {cat_duplicates} case {i+1}")
-            total_cases += 1
-
-        # 3. Sorted (Ascending)
-        cat_sorted = f"sorted_{name}"
-        sorted_case = list(range(size))
-        cases_by_category[cat_sorted].append(sorted_case)
-        print(f"  - Added {cat_sorted} case")
-        total_cases += 1
-
-        # 4. Reversed (Descending)
-        cat_reversed = f"reversed_{name}"
-        reversed_case = list(range(size, 0, -1))
-        cases_by_category[cat_reversed].append(reversed_case)
-        print(f"  - Added {cat_reversed} case")
-        total_cases += 1
-
-        # 5. Nearly Sorted (e.g., swap a few pairs) - Optional but good
-        cat_nearly_sorted = f"nearly_sorted_{name}"
-        num_swaps = max(1, size // 20) # Swap ~5% of elements
-        for i in range(num_cases_per_type):
-            nearly_sorted_case = list(range(size))
-            for _ in range(num_swaps):
-                idx1, idx2 = random.sample(range(size), 2)
-                nearly_sorted_case[idx1], nearly_sorted_case[idx2] = nearly_sorted_case[idx2], nearly_sorted_case[idx1]
-            cases_by_category[cat_nearly_sorted].append(nearly_sorted_case)
-            print(f"  - Added {cat_nearly_sorted} case {i+1}")
-            total_cases += 1
-
-
-    # Example of adding a very large case (use with caution!)
-    # size_xl = 10_000_000
-    # cat_xl = "random_xl"
-    # print(f"Generating XL random case ({size_xl})...")
-    # cases_by_category[cat_xl].append([random.randint(min_val, max_val) for _ in range(size_xl)])
-    # total_cases += 1
-
-    print(f"Generated a total of {total_cases} test cases across {len(cases_by_category)} categories.")
-    return dict(cases_by_category) # Convert back to regular dict
-
-
-# --- Test Suite Loading/Saving Functions ---
-
-def load_test_suite(filename: str) -> dict:
-    """Loads the test suite from a JSON file."""
-    print(f"Loading test suite from {filename}...")
-    try:
-        with open(filename, 'r') as f:
-            test_suite = json.load(f)
-        print(f"Successfully loaded test suite from {filename}")
-        return test_suite
-    except FileNotFoundError:
-        print(f"Error: Test suite file '{filename}' not found.")
-        raise # Re-raise to be handled by caller
-    except Exception as e:
-        print(f"Error loading test suite from {filename}: {e}")
-        raise # Re-raise to be handled by caller
-
-def generate_and_save_test_suite(filename: str, **kwargs):
-    """Generates test cases using generate_test_cases and saves them to a JSON file."""
-    print(f"Generating test suite with params {kwargs} and saving to {filename}")
-    try:
-        test_cases = generate_test_cases(**kwargs)
-        with open(filename, 'w') as f:
-            json.dump(test_cases, f, indent=2)
-        print(f"Successfully generated and saved test suite to {filename}")
-    except Exception as e:
-        print(f"Error generating or saving test suite to {filename}: {e}")
-        raise # Re-raise to be handled by caller
+# Test suite generation/loading functions are now in test_suite_generator.py
 
 # --- Evaluation Logic ---
 
@@ -265,141 +152,21 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
         if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
         return results
 
-    # Define the Python code to be executed inside the container for each test case
-    # This code loads the LLM function, runs it with input from stdin, and prints JSON result to stdout
-    exec_wrapper_code = """
-import sys
-import json
-import time
-import traceback
-import importlib.util
-import io
-import os # Need os module for file existence check
-
-# --- Define the function to load and run ---
-def load_and_run_sort():
-    result = {'output': None, 'error': None, 'stdout': None, 'stderr': None, 'exec_time_ms': None}
-    llm_module = None
-    sort_algorithm = None
-
-    # Capture stdout/stderr during the entire process
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    captured_stdout = io.StringIO()
-    captured_stderr = io.StringIO()
-    sys.stdout = captured_stdout
-    sys.stderr = captured_stderr
-
-    start_time = time.perf_counter()
-
+    # Read the Docker execution wrapper script content
     try:
-        # 1. Read input JSON from stdin FIRST to avoid broken pipes if import fails
-        input_data_json = sys.stdin.read()
-        if not input_data_json:
-             raise ValueError("No input data received via stdin.")
-
-        # 2. Add sandbox to path and import llm_sort directly
-        file_path = "/sandbox/llm_sort.py" # Still useful for error messages
-        # --- Check if file exists before attempting import ---
-        if not os.path.exists(file_path):
-            # List directory contents for debugging if file not found
-            try:
-                sandbox_contents = os.listdir('/sandbox')
-                dir_listing_str = f"Contents of /sandbox: {sandbox_contents}"
-            except Exception as list_e:
-                dir_listing_str = f"(Could not list /sandbox contents: {list_e})"
-            raise FileNotFoundError(f"[Errno 2] No such file or directory: '{file_path}'. {dir_listing_str}")
-        # --- End check ---
-
-        # Import the module directly (should work if workdir=/sandbox)
-        try:
-            import llm_sort
-        except ModuleNotFoundError:
-            # This shouldn't happen if the file exists and path is set, but catch defensively
-            raise ImportError(f"Could not import 'llm_sort' even after adding /sandbox to sys.path.")
-        except Exception as import_err: # Catch other potential import errors (e.g., syntax errors in llm_sort.py)
-            raise ImportError(f"Error importing 'llm_sort': {type(import_err).__name__}: {import_err}")
-
-        # 3. Get the sort_algorithm function
-        if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm):
-            raise NameError("Function 'sort_algorithm' not found or not callable in imported llm_sort module.")
-        sort_algorithm = llm_sort.sort_algorithm
-
-        # 4. Parse the input JSON (already read)
-        input_list = json.loads(input_data_json)
-
-        # 5. Execute the sort_algorithm
-        output_list = sort_algorithm(input_list)
-        result['output'] = output_list # Store the actual Python object/list
-
+        with open(DOCKER_WRAPPER_SCRIPT_NAME, 'r', encoding='utf-8') as f:
+            exec_wrapper_code = f.read()
+    except FileNotFoundError:
+        results['error'] = f"Critical Error: Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}' not found."
+        print(results['error'])
+        if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+        return results
     except Exception as e:
-        # Capture any exception during reading, loading, parsing, or execution
-        result['error'] = f"{type(e).__name__}: {e}\\n{traceback.format_exc()}"
-    finally:
-        end_time = time.perf_counter()
-        result['exec_time_ms'] = (end_time - start_time) * 1000
+        results['error'] = f"Critical Error: Failed to read Docker wrapper script '{DOCKER_WRAPPER_SCRIPT_NAME}': {e}"
+        print(results['error'])
+        if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+        return results
 
-        # Restore streams and get captured content
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        result['stdout'] = captured_stdout.getvalue()
-        result['stderr'] = captured_stderr.getvalue()
-        captured_stdout.close()
-        captured_stderr.close()
-
-        # Combine captured stdout/stderr into error if an error occurred or if they contain data
-        # Append safely to avoid syntax errors if captured output contains problematic characters
-        combined_error = result['error'] if result['error'] else ""
-        captured_stdout_val = result.get('stdout', '')
-        captured_stderr_val = result.get('stderr', '')
-
-        if combined_error:
-            if captured_stdout_val:
-                combined_error += "\\n--- Captured Stdout ---\\n" + captured_stdout_val
-            if captured_stderr_val:
-                combined_error += "\\n--- Captured Stderr ---\\n" + captured_stderr_val
-        elif captured_stdout_val or captured_stderr_val: # No primary error, but stray output/errors
-             combined_error = "(No primary exception, but captured output found)"
-             if captured_stdout_val:
-                 combined_error += "\\n--- Captured Stdout ---\\n" + captured_stdout_val
-             if captured_stderr_val:
-                 combined_error += "\\n--- Captured Stderr ---\\n" + captured_stderr_val
-
-        result['error'] = combined_error # Update the result dict with the combined error string
-
-        # Print the final result dictionary as JSON to the original stdout
-        # Ensure output is serializable (it should be if sort_algorithm returns a list)
-        final_output_json = None
-        try:
-            # Attempt to serialize the primary result
-            final_output_json = json.dumps(result)
-        except TypeError as json_err:
-            # Fallback if the output or other fields are not JSON serializable
-            print(f"Warning: JSON serialization failed for primary result: {json_err}", file=sys.stderr) # Log warning to stderr
-            fallback_result = {
-                'output': repr(result.get('output')), # Use repr as fallback
-                'error': (result.get('error') or "") + f"\\nJSON Serialization Error: {json_err}",
-                'stdout': result.get('stdout'),
-                'stderr': result.get('stderr'),
-                'exec_time_ms': result.get('exec_time_ms')
-            }
-            try:
-                # Attempt to serialize the fallback result
-                final_output_json = json.dumps(fallback_result)
-            except Exception as fallback_json_err:
-                # Very unlikely, but catch errors serializing the fallback itself
-                print(f"ERROR: JSON serialization failed even for fallback result: {fallback_json_err}", file=sys.stderr)
-                # Construct a minimal error JSON string manually
-                final_output_json = f'{{"output": null, "error": "FATAL: Could not serialize execution results. Original error hint: {repr(result.get(\\"error\\"))}. Serialization error: {repr(str(fallback_json_err))}", "stdout": null, "stderr": null, "exec_time_ms": {result.get("exec_time_ms", "null")}}}'
-
-        # Print the determined JSON output (either primary, fallback, or minimal error)
-        print(final_output_json)
-
-
-# --- Run the function ---
-if __name__ == "__main__":
-    load_and_run_sort()
-"""
 
     container = None
     # Use ExitStack for robust cleanup of tempdir and container
@@ -408,25 +175,29 @@ if __name__ == "__main__":
            # Create TemporaryDirectory for the LLM code and runner script
            temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
            llm_code_filename = "llm_sort.py"
-           runner_script_filename = "exec_runner.py" # Filename for the wrapper script
+           # Use the constant for the wrapper script filename on the host
+           runner_script_filename_host = DOCKER_WRAPPER_SCRIPT_NAME
            llm_code_path_host = os.path.join(temp_dir, llm_code_filename)
-           runner_script_path_host = os.path.join(temp_dir, runner_script_filename) # Host path for runner
+           # The runner script is read from its fixed location, but we'll write its content
+           # to the temp dir for copying into the container, using a consistent name inside.
+           runner_script_filename_cont = "exec_runner.py" # Name inside container
+           runner_script_path_host = os.path.join(temp_dir, runner_script_filename_cont) # Path on host temp dir
+
            sandbox_dir = "/sandbox" # Mount point inside container
            llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
-           runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename}" # Container path for runner
+           runner_script_path_cont = f"{sandbox_dir}/{runner_script_filename_cont}" # Container path for runner
 
            # --- DEBUG: Verify host files before container start ---
            print(f"DEBUG: Host temporary directory: {temp_dir}")
            print(f"DEBUG: Host LLM code path: {llm_code_path_host}")
-           print(f"DEBUG: Host runner script path: {runner_script_path_host}")
+           print(f"DEBUG: Host runner script path (in temp): {runner_script_path_host}")
            # --- END DEBUG ---
 
-           # Write the generated code and the runner script to the host temp directory
+           # Write the generated code and the wrapper script (read earlier) to the host temp directory
            with open(llm_code_path_host, 'w', encoding='utf-8') as f_llm_script:
                f_llm_script.write(generated_code)
            with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
-               # Dedent the wrapper code before writing to handle potential indentation issues
-               f_runner_script.write(textwrap.dedent(exec_wrapper_code))
+               f_runner_script.write(exec_wrapper_code) # Write the content read from docker_exec_wrapper.py
 
            # --- DEBUG: Check if files exist on host before mount ---
            llm_exists = os.path.exists(llm_code_path_host)
@@ -464,14 +235,15 @@ if __name__ == "__main__":
            container.exec_run(cmd=f"mkdir -p {sandbox_dir}")
 
            # --- Prepare and copy files into the container ---
-           print(f"Copying {llm_code_filename} and {runner_script_filename} to container:{sandbox_dir}...")
+           # Use the container-internal runner script name in the log message
+           print(f"Copying {llm_code_filename} and {runner_script_filename_cont} to container:{sandbox_dir}...")
            # Create an in-memory tar archive
            tar_stream = io.BytesIO()
            with tarfile.open(fileobj=tar_stream, mode='w') as tar:
                # Add llm_sort.py
                tar.add(llm_code_path_host, arcname=llm_code_filename)
-               # Add exec_runner.py
-               tar.add(runner_script_path_host, arcname=runner_script_filename)
+               # Add the runner script using its container-internal name
+               tar.add(runner_script_path_host, arcname=runner_script_filename_cont)
 
            tar_stream.seek(0) # Rewind the stream
            # Copy the archive to the container
@@ -532,7 +304,7 @@ if __name__ == "__main__":
 
                    try:
                        # Command to execute the runner script file directly inside the container
-                       # Pass input via stdin=True
+                       # Use the container-internal runner script path
                        exec_command = ["python", runner_script_path_cont] # e.g., ["python", "/sandbox/exec_runner.py"]
 
                        # Use socket=True for reliable stdin/stdout handling
@@ -785,11 +557,8 @@ def run_single_benchmark(llm_name: str, generated_code: str, categorized_test_ca
         # 'generated_code' is no longer added here, it's handled in app.py
     }
 
-# Constant for the baseline benchmark label
-BASELINE_ALGORITHM_NAME = "Python sorted() Baseline"
-
-# Note: algorithm_name parameter removed, using constant label instead.
-def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
+# Note: algorithm_name parameter removed, using constant label BASELINE_ALGORITHM_NAME instead.
+def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback: Optional[Callable[[dict], None]] = None, python_sorted_identifier: str = "Python sorted()") -> dict:
     """
     Runs a benchmark using Python's built-in sorted() function as a baseline,
     using provided test cases and optionally reporting progress.
@@ -804,7 +573,7 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
     algorithm_name = BASELINE_ALGORITHM_NAME # Use the constant label
     print(f"Running {algorithm_name} benchmark...")
     results = {
-        'llm': PYTHON_SORTED_BENCHMARK, # Note: This constant needs to be defined/imported if run standalone
+        'llm': python_sorted_identifier, # Use the passed identifier (e.g., from app.py)
         'algorithm': algorithm_name, # Use the constant label
         'correctness': 100.0, # sorted() is assumed correct
         'avg_time_ms': None, # This is the baseline itself
@@ -903,83 +672,42 @@ def run_python_sorted_benchmark(categorized_test_cases: dict, progress_callback:
     return results
 
 
-# Default filename, can be overridden by command-line arg
-DEFAULT_TEST_SUITE_FILE = "test_suite.json"
-# Note: PYTHON_SORTED_BENCHMARK should ideally be imported or passed if needed here,
-# assuming it's defined centrally (e.g., in app.py).
-# If running standalone, this example might need adjustment or the constant defined here.
-
+# Note: The __main__ block below is for standalone testing/example usage of benchmark.py.
+# Test suite generation is now handled by test_suite_generator.py.
 
 if __name__ == '__main__':
     # Import argparse here as it's only needed for CLI execution
     import argparse
     # Import the constant needed for the example run, if running standalone
-    try:
-        # Attempt to import from app if available (won't work standalone)
-        from app import PYTHON_SORTED_BENCHMARK
-    except ImportError:
-        # Define locally if running benchmark.py directly as a script
-        print("Warning: app.py not found, defining PYTHON_SORTED_BENCHMARK locally for example.")
-        PYTHON_SORTED_BENCHMARK = "Python sorted()"
+    # Define a local constant for the example run if app isn't available
+    LOCAL_PYTHON_SORTED_BENCHMARK_ID = "Python sorted() [Standalone]"
 
-    parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
-
-    parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
-    parser.add_argument('--generate-suite', action='store_true', help=f"Generate and save a new test suite to {DEFAULT_TEST_SUITE_FILE}")
-    parser.add_argument('--suite-file', default=DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
-    # Add arguments to control generation parameters if needed, e.g.:
-    parser.add_argument('--num-cases', type=int, default=5, help="Number of cases per type/size for suite generation")
-    parser.add_argument('--size-s', type=int, default=20)
-    parser.add_argument('--size-m', type=int, default=20000)
-    parser.add_argument('--size-l', type=int, default=2000000)
-
+    parser = argparse.ArgumentParser(description="Benchmark Execution Examples")
+    # Use the default from the generator module
+    parser.add_argument('--suite-file', default=test_suite_generator.DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
 
     args = parser.parse_args()
 
-    if args.generate_suite:
-        gen_params = {
-            'size_small': args.size_s,
-            'size_medium': args.size_m,
-            'size_large': args.size_l,
-            'num_cases_per_type': args.num_cases
-        }
-        # Call the actual function, not the placeholder
-        print(f"Generating test suite with params {gen_params} and saving to {args.suite_file}")
-        try:
-            test_cases = generate_test_cases(**gen_params)
-            with open(args.suite_file, 'w') as f:
-                json.dump(test_cases, f, indent=2)
-            print(f"Successfully generated and saved test suite to {args.suite_file}")
-        except Exception as e:
-            print(f"Error generating or saving test suite to {args.suite_file}: {e}")
+    # Example of running benchmarks using a loaded suite
+    print("Running example benchmarks with loaded suite...")
+    try:
+        # Load the test suite using the function from the generator module
+        test_suite = test_suite_generator.load_test_suite(args.suite_file)
 
-    else:
-        # Example of running benchmarks using a loaded suite (adjust as needed)
-        print("Running example benchmarks with loaded suite...")
-        try:
-            # Call the actual function, not the placeholder
-            print(f"Loading test suite from {args.suite_file}")
-            try:
-                with open(args.suite_file, 'r') as f:
-                    test_suite = json.load(f)
-                print(f"Successfully loaded test suite from {args.suite_file}")
-            except FileNotFoundError:
-                print(f"Error: Test suite file '{args.suite_file}' not found.")
-                raise # Re-raise to be caught below
-            except Exception as e:
-                print(f"Error loading test suite from {args.suite_file}: {e}")
-                raise # Re-raise to be caught below
+        # Example usage - Load suite first, then run benchmarks
+        print("\nRunning example benchmarks with loaded suite...")
 
-            # Example usage - Load suite first, then run benchmarks
-            print("\nRunning example benchmarks with loaded suite...")
+        # Run baseline benchmark
+        print("\nRunning baseline benchmark example...")
+        # Pass the local identifier for standalone runs
+        result_baseline = run_python_sorted_benchmark(
+            categorized_test_cases=test_suite,
+            python_sorted_identifier=LOCAL_PYTHON_SORTED_BENCHMARK_ID
+        )
+        print("\nPython sorted() Benchmark Result:\n", json.dumps(result_baseline, indent=2))
 
-            # Run baseline benchmark
-            print("\nRunning baseline benchmark example...")
-            result_baseline = run_python_sorted_benchmark(categorized_test_cases=test_suite) # Run baseline
-            print("\nPython sorted() Benchmark Result:\n", json.dumps(result_baseline, indent=2))
-
-            # --- Run example with fixed Merge Sort code ---
-            print("\nRunning example benchmark with fixed Merge Sort code...")
+        # --- Run example with fixed Merge Sort code ---
+        print("\nRunning example benchmark with fixed Merge Sort code...")
 
             EXAMPLE_MERGE_SORT_CODE = """
 import sys
@@ -1039,6 +767,6 @@ def sort_algorithm(arr: List[T]) -> List[T]:
 
 
         except FileNotFoundError:
-            print(f"Test suite file '{args.suite_file}' not found. Generate it first using --generate-suite.")
+            print(f"Test suite file '{args.suite_file}' not found. Generate it first using: python test_suite_generator.py --generate-suite")
         except Exception as e:
             print(f"An error occurred during example benchmark run: {e}")
