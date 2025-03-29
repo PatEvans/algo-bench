@@ -32,6 +32,10 @@
     <div id="progress-container">
         <div id="status">Status: Initializing...</div>
         <div id="overall-progress">Progress: 0 / ?</div>
+        <div id="generated-code-area" style="margin-top: 15px; display: none;">
+            <h3>Generated Code:</h3>
+            <pre><code id="generated-code-content" style="background: #eee; padding: 10px; display: block; white-space: pre-wrap; word-wrap: break-word;"></code></pre>
+        </div>
         <ul id="progress-list">
             <li>Waiting for updates...</li>
         </ul>
@@ -48,8 +52,11 @@
         const progressListElement = document.getElementById('progress-list');
         const finalResultElement = document.getElementById('final-result');
         const resultDetailsElement = document.getElementById('result-details');
+        const generatedCodeArea = document.getElementById('generated-code-area');
+        const generatedCodeContent = document.getElementById('generated-code-content');
         let intervalId = null;
         let lastUpdateCount = 0;
+        let codeDisplayed = false; // Flag to prevent redisplaying code
 
         function formatProgressItem(item) {
             let statusClass = '';

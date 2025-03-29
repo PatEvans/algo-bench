@@ -97,10 +97,13 @@ def run_benchmark_background(task_id, llm_name):
                 update_data['timestamp'] = time.time()
                 BENCHMARK_STATUS[task_id]['progress'].append(update_data)
                 # Update overall status fields as well
-                BENCHMARK_STATUS[task_id]['status'] = update_data.get('status', 'Running')
-                BENCHMARK_STATUS[task_id]['current_case'] = update_data.get('current_case')
-                BENCHMARK_STATUS[task_id]['total_cases'] = update_data.get('total_cases')
+                BENCHMARK_STATUS[task_id]['status'] = update_data.get('status', BENCHMARK_STATUS[task_id]['status']) # Keep existing status if not provided
+                BENCHMARK_STATUS[task_id]['current_case'] = update_data.get('current_case', BENCHMARK_STATUS[task_id]['current_case'])
+                BENCHMARK_STATUS[task_id]['total_cases'] = update_data.get('total_cases', BENCHMARK_STATUS[task_id]['total_cases'])
                 BENCHMARK_STATUS[task_id]['last_update'] = update_data['timestamp']
+                # Store generated code if provided in the update
+                if 'generated_code' in update_data:
+                     BENCHMARK_STATUS[task_id]['generated_code'] = update_data['generated_code']
 
 
     # Initialize status
@@ -118,6 +121,7 @@ def run_benchmark_background(task_id, llm_name):
             'progress': deque(maxlen=MAX_PROGRESS_UPDATES), # Store recent updates
             'final_result': None,
             'error': None,
+            'generated_code': None, # Add field to store generated code
             'last_update': time.time()
         }
 
@@ -148,7 +152,22 @@ def run_benchmark_background(task_id, llm_name):
                 progress_callback=progress_callback
             )
 
-        # Save final result to DB
+        # --- Store generated code and send update ---
+        # The 'result' dict from run_single_benchmark contains the generated code
+        generated_code_from_llm = result.get('generated_code')
+        if generated_code_from_llm:
+             with STATUS_LOCK:
+                 if task_id in BENCHMARK_STATUS:
+                     BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_from_llm
+             # Send a specific progress update indicating code is ready
+             progress_callback({
+                 'status': 'Code Generated',
+                 'category': 'Setup',
+                 'generated_code': generated_code_from_llm # Include code in this update
+             })
+        # ---------------------------------------------
+
+        # Save final result to DB (contains evaluation, not just code)
         database.save_result(result)
 
         # Update final status
