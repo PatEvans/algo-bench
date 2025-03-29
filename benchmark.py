@@ -293,7 +293,12 @@ def load_and_run_sort():
     start_time = time.perf_counter()
 
     try:
-        # 1. Add sandbox to path and import llm_sort directly
+        # 1. Read input JSON from stdin FIRST to avoid broken pipes if import fails
+        input_data_json = sys.stdin.read()
+        if not input_data_json:
+             raise ValueError("No input data received via stdin.")
+
+        # 2. Add sandbox to path and import llm_sort directly
         file_path = "/sandbox/llm_sort.py" # Still useful for error messages
         # --- Check if file exists before attempting import ---
         if not os.path.exists(file_path):
@@ -315,23 +320,20 @@ def load_and_run_sort():
         except Exception as import_err: # Catch other potential import errors (e.g., syntax errors in llm_sort.py)
             raise ImportError(f"Error importing 'llm_sort': {type(import_err).__name__}: {import_err}")
 
-        # 2. Get the sort_algorithm function
+        # 3. Get the sort_algorithm function
         if not hasattr(llm_sort, 'sort_algorithm') or not callable(llm_sort.sort_algorithm):
             raise NameError("Function 'sort_algorithm' not found or not callable in imported llm_sort module.")
         sort_algorithm = llm_sort.sort_algorithm
 
-        # 3. Read input JSON from stdin
-        input_data_json = sys.stdin.read()
-        if not input_data_json:
-             raise ValueError("No input data received via stdin.")
+        # 4. Parse the input JSON (already read)
         input_list = json.loads(input_data_json)
 
-        # 4. Execute the sort_algorithm
+        # 5. Execute the sort_algorithm
         output_list = sort_algorithm(input_list)
         result['output'] = output_list # Store the actual Python object/list
 
     except Exception as e:
-        # Capture any exception during loading or execution
+        # Capture any exception during reading, loading, parsing, or execution
         result['error'] = f"{type(e).__name__}: {e}\\n{traceback.format_exc()}"
     finally:
         end_time = time.perf_counter()
