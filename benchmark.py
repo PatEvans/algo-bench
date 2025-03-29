@@ -472,14 +472,60 @@ def run_python_sorted_benchmark(progress_callback: Optional[Callable[[dict], Non
 
 # Example usage needs the constant defined in app.py or locally
 PYTHON_SORTED_BENCHMARK = "Python sorted()" # Define locally for example usage
+DEFAULT_TEST_SUITE_FILE = "test_suite.json"
 
 if __name__ == '__main__':
-    # Example usage updated to reflect removal of algorithm_name parameter
-    result_llm = run_single_benchmark('dummy_llm')
-    print("\nLLM Benchmark Result:\n", result_llm)
+    import argparse
 
-    result_baseline = run_python_sorted_benchmark() # Run baseline
-    print("\nPython sorted() Benchmark Result:\n", result_baseline)
+    parser = argparse.ArgumentParser(description="Benchmark Utility Functions")
+    parser.add_argument('--generate-suite', action='store_true', help=f"Generate and save a new test suite to {DEFAULT_TEST_SUITE_FILE}")
+    parser.add_argument('--suite-file', default=DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
+    # Add arguments to control generation parameters if needed, e.g.:
+    parser.add_argument('--num-cases', type=int, default=5, help="Number of cases per type/size for suite generation")
+    parser.add_argument('--size-s', type=int, default=20)
+    parser.add_argument('--size-m', type=int, default=20000)
+    parser.add_argument('--size-l', type=int, default=2000000)
 
-    # result_quick = run_single_benchmark('dummy_llm') # Example if running another LLM test
-    # print("\nBenchmark Result:\n", result_quick)
+
+    args = parser.parse_args()
+
+    if args.generate_suite:
+        gen_params = {
+            'size_small': args.size_s,
+            'size_medium': args.size_m,
+            'size_large': args.size_l,
+            'num_cases_per_type': args.num_cases
+        }
+        generate_and_save_test_suite(args.suite_file, **gen_params)
+    else:
+        # Example of running benchmarks using a loaded suite (adjust as needed)
+        print("Running example benchmarks with loaded suite...")
+        try:
+            test_suite = load_test_suite(args.suite_file)
+
+            # Example usage updated to pass the loaded test suite
+            # Run dummy_llm benchmark
+            print("\nRunning dummy_llm benchmark example...")
+            result_llm = run_single_benchmark('dummy_llm', categorized_test_cases=test_suite)
+            print("\nLLM (dummy_llm) Benchmark Result:\n", json.dumps(result_llm, indent=2))
+
+            # Run baseline benchmark
+            print("\nRunning baseline benchmark example...")
+            result_baseline = run_python_sorted_benchmark(categorized_test_cases=test_suite) # Run baseline
+            print("\nPython sorted() Benchmark Result:\n", json.dumps(result_baseline, indent=2))
+
+        except FileNotFoundError:
+            print(f"Test suite file '{args.suite_file}' not found. Generate it first using --generate-suite.")
+        except Exception as e:
+            print(f"An error occurred during example benchmark run: {e}")
+
+
+    # Example if running another LLM test (assuming test_suite is loaded)
+    # try:
+    #     if 'test_suite' in locals():
+    #          result_other = run_single_benchmark('some_other_llm', categorized_test_cases=test_suite)
+    #          print("\nOther LLM Benchmark Result:\n", json.dumps(result_other, indent=2))
+    # except NameError:
+    #      print("Cannot run other LLM example without loaded test suite.")
+    # except Exception as e:
+    #      print(f"An error occurred during other LLM benchmark run: {e}")
