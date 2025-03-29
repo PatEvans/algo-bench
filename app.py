@@ -122,6 +122,9 @@ def run_benchmark_background(task_id, llm_name):
         }
 
     try:
+        # Ensure DB is initialized within this thread's context before saving
+        database.init_db()
+
         # --- Check if Test Suite is Loaded ---
         if GLOBAL_TEST_SUITE is None:
             # Use the stored error message from startup
