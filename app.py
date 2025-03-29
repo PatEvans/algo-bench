@@ -49,7 +49,11 @@ def run_benchmark_background(llm_name, algorithm_name):
             'llm': llm_name,
             'algorithm': algorithm_name,
             'error': f"Benchmark execution failed: {e}",
-            'correctness': None, 'avg_time_ms': None, 'baseline_avg_time_ms': None
+            'correctness': None,
+            'avg_time_ms': None,
+            'baseline_avg_time_ms': None,
+            'performance_details': None, # Add placeholder
+            'generated_code': None
         }
         try:
             database.save_result(error_result)

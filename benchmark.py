@@ -10,6 +10,9 @@ Handles:
 import time
 import random
 import llm_interface
+import json # Needed later for potential detail storage if not handled by DB layer
+from collections import defaultdict # Useful for aggregating results
+
 # Need a secure way to execute code, e.g., using restricted environments or sandboxing.
 # This is a critical security consideration. A simple `exec` is DANGEROUS.
 
@@ -24,60 +27,85 @@ def generate_test_cases(size_small=10, size_medium=1000, size_large=100000, num_
     - Duplicates (many repeating elements)
     - Sorted (ascending)
     - Reversed (descending)
+    - Nearly Sorted (a few elements swapped)
 
     Args:
         size_small: Size for small test cases.
         size_medium: Size for medium test cases.
         size_large: Size for large test cases.
-                    (Note: Very large sizes like 10M might exceed memory/time limits).
-        num_cases_per_type: Number of random/duplicate cases to generate per size.
+        num_cases_per_type: Number of random/duplicate/nearly sorted cases per size.
 
     Returns:
-        A list of lists, where each inner list is an integer test case.
+        A dictionary where keys are category names (e.g., "random_small", "sorted_large")
+        and values are lists containing the test case lists for that category.
     """
-    cases = [
-        [],    # Empty list
-        [5],   # Single element
-    ]
+    cases_by_category = defaultdict(list)
+    cases_by_category['special_empty'] = [[]]
+    cases_by_category['special_single'] = [[5]]
+
     sizes = {'small': size_small, 'medium': size_medium, 'large': size_large}
-    # Define range for random numbers, e.g., based on size
     min_val, max_val = -10000, 10000
 
+    total_cases = 2 # Start with empty and single
+
     for name, size in sizes.items():
-        if size == 0: continue # Skip size 0 if specified
+        if size == 0: continue
 
         print(f"Generating cases for size: {name} ({size})...")
 
         # 1. Randomized
+        cat_random = f"random_{name}"
         for i in range(num_cases_per_type):
             random_case = [random.randint(min_val, max_val) for _ in range(size)]
-            cases.append(random_case)
-            print(f"  - Added random case {i+1}")
+            cases_by_category[cat_random].append(random_case)
+            print(f"  - Added {cat_random} case {i+1}")
+            total_cases += 1
 
-        # 2. With Duplicates (e.g., numbers from a smaller range)
-        duplicate_range_max = max(1, size // 10) # Ensure range is at least 1
+        # 2. With Duplicates
+        cat_duplicates = f"duplicates_{name}"
+        duplicate_range_max = max(1, size // 10)
         for i in range(num_cases_per_type):
             duplicate_case = [random.randint(0, duplicate_range_max) for _ in range(size)]
-            cases.append(duplicate_case)
-            print(f"  - Added duplicate case {i+1}")
+            cases_by_category[cat_duplicates].append(duplicate_case)
+            print(f"  - Added {cat_duplicates} case {i+1}")
+            total_cases += 1
 
         # 3. Sorted (Ascending)
+        cat_sorted = f"sorted_{name}"
         sorted_case = list(range(size))
-        cases.append(sorted_case)
-        print(f"  - Added sorted case")
+        cases_by_category[cat_sorted].append(sorted_case)
+        print(f"  - Added {cat_sorted} case")
+        total_cases += 1
 
         # 4. Reversed (Descending)
+        cat_reversed = f"reversed_{name}"
         reversed_case = list(range(size, 0, -1))
-        cases.append(reversed_case)
-        print(f"  - Added reversed case")
+        cases_by_category[cat_reversed].append(reversed_case)
+        print(f"  - Added {cat_reversed} case")
+        total_cases += 1
+
+        # 5. Nearly Sorted (e.g., swap a few pairs) - Optional but good
+        cat_nearly_sorted = f"nearly_sorted_{name}"
+        num_swaps = max(1, size // 20) # Swap ~5% of elements
+        for i in range(num_cases_per_type):
+            nearly_sorted_case = list(range(size))
+            for _ in range(num_swaps):
+                idx1, idx2 = random.sample(range(size), 2)
+                nearly_sorted_case[idx1], nearly_sorted_case[idx2] = nearly_sorted_case[idx2], nearly_sorted_case[idx1]
+            cases_by_category[cat_nearly_sorted].append(nearly_sorted_case)
+            print(f"  - Added {cat_nearly_sorted} case {i+1}")
+            total_cases += 1
+
 
     # Example of adding a very large case (use with caution!)
     # size_xl = 10_000_000
+    # cat_xl = "random_xl"
     # print(f"Generating XL random case ({size_xl})...")
-    # cases.append([random.randint(min_val, max_val) for _ in range(size_xl)])
+    # cases_by_category[cat_xl].append([random.randint(min_val, max_val) for _ in range(size_xl)])
+    # total_cases += 1
 
-    print(f"Generated a total of {len(cases)} test cases.")
-    return cases
+    print(f"Generated a total of {total_cases} test cases across {len(cases_by_category)} categories.")
+    return dict(cases_by_category) # Convert back to regular dict
 
 def evaluate_algorithm(generated_code: str) -> dict:
     """
@@ -116,61 +144,93 @@ def evaluate_algorithm(generated_code: str) -> dict:
 
         sort_func = local_namespace['sort_algorithm']
 
-        for test_case in test_cases:
-             # Prepare inputs for both sorts
-            llm_input = list(test_case) # Ensure original is not modified for LLM
-            baseline_input = list(test_case) # Ensure original is not modified for baseline
-            expected_output = sorted(test_case) # Ground truth
+        # Iterate through each category and its test cases
+        for category, test_cases_in_category in categorized_test_cases.items():
+            print(f"  Evaluating category: {category} ({len(test_cases_in_category)} cases)")
+            cat_stats = category_results[category] # Get stats dict for this category
 
-            # --- Time LLM's sort_algorithm ---
-            llm_start_time = time.perf_counter()
-            actual_output = None
-            llm_error = None
-            try:
-                actual_output = sort_func(llm_input)
-                llm_end_time = time.perf_counter()
-                current_llm_time = llm_end_time - llm_start_time
+            for test_case in test_cases_in_category:
+                overall_total_cases += 1
+                cat_stats['case_count'] += 1
 
-                if actual_output == expected_output:
-                    correct_count += 1
-                    total_llm_time += current_llm_time # Only sum time for correct sorts
-                else:
-                    # Truncate output for printing if it's a list and long
-                    actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
-                    expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
+                # Prepare inputs for both sorts
+                llm_input = list(test_case)
+                baseline_input = list(test_case)
+                expected_output = sorted(test_case) # Ground truth
+
+                # --- Time LLM's sort_algorithm ---
+                llm_start_time = time.perf_counter()
+                actual_output = None
+                llm_error = None
+                current_llm_time = None
+                is_correct = False
+
+                try:
+                    actual_output = sort_func(llm_input)
+                    llm_end_time = time.perf_counter()
+                    current_llm_time = llm_end_time - llm_start_time
+
+                    if actual_output == expected_output:
+                        is_correct = True
+                        overall_correct_count += 1
+                        cat_stats['correct_count'] += 1
+                        # Only add time for correct runs to avoid skewing averages
+                        overall_llm_time += current_llm_time
+                        cat_stats['llm_time'] += current_llm_time
+                        overall_llm_runs_timed += 1
+                        cat_stats['llm_runs_timed'] += 1
+                    else:
+                        # Log incorrect sort
+                        actual_repr = repr(actual_output[:20]) + '...' if isinstance(actual_output, list) and len(actual_output) > 20 else repr(actual_output)
+                        expected_repr = repr(expected_output[:20]) + '...' if len(expected_output) > 20 else repr(expected_output)
+                        test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                        print(f"    Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
+
+                except Exception as e:
+                    llm_error = e
                     test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                    print(f"Incorrect sort: Input={test_repr}, Expected={expected_repr}, Got={actual_repr}")
+                    print(f"    Error during LLM sort execution: Input={test_repr}, Error={e}")
+                    # Do not count time if it errored
 
-            except Exception as e:
-                llm_end_time = time.perf_counter() # Still record time until failure if possible
-                llm_error = e
-                test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                print(f"Error during LLM sort execution: Input={test_repr}, Error={e}")
-                # Do not add time to total_llm_time if it errored
+                # --- Time Python's built-in sorted() ---
+                baseline_start_time = time.perf_counter()
+                current_baseline_time = None
+                try:
+                    _ = sorted(baseline_input) # Execute baseline sort
+                    baseline_end_time = time.perf_counter()
+                    current_baseline_time = baseline_end_time - baseline_start_time
+                    overall_baseline_time += current_baseline_time
+                    cat_stats['baseline_time'] += current_baseline_time
+                except Exception as e:
+                    test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
+                    print(f"    Error during baseline sort execution: Input={test_repr}, Error={e}")
+                    # Decide how to handle baseline errors (e.g., skip timing for this case?)
 
-            # --- Time Python's built-in sorted() ---
-            baseline_start_time = time.perf_counter()
-            try:
-                _ = sorted(baseline_input) # Execute baseline sort
-                baseline_end_time = time.perf_counter()
-                total_baseline_time += (baseline_end_time - baseline_start_time)
-            except Exception as e:
-                # This should ideally not happen with built-in sorted
-                test_repr = repr(test_case[:20]) + '...' if len(test_case) > 20 else repr(test_case)
-                print(f"Error during baseline sort execution: Input={test_repr}, Error={e}")
-                # If baseline fails, we might not want to record its time? Or record as infinity? For now, just print.
+        # --- Calculate Final Results ---
 
+        # Overall results
+        if overall_total_cases > 0:
+            results['correctness'] = (overall_correct_count / overall_total_cases) * 100
+            results['baseline_avg_time_ms'] = (overall_baseline_time / overall_total_cases) * 1000
+        if overall_llm_runs_timed > 0: # Average LLM time only over correctly sorted cases
+            results['avg_time_ms'] = (overall_llm_time / overall_llm_runs_timed) * 1000
 
-        if test_cases:
-            results['correctness'] = (correct_count / len(test_cases)) * 100 if len(test_cases) > 0 else 0.0
-        if correct_count > 0:
-             # Average LLM time only over correctly sorted cases
-            results['avg_time_ms'] = (total_llm_time / correct_count) * 1000
-        if len(test_cases) > 0: # Average baseline time over all cases attempted
-             results['baseline_avg_time_ms'] = (total_baseline_time / len(test_cases)) * 1000
+        # Per-category results
+        for category, stats in category_results.items():
+            cat_correctness = (stats['correct_count'] / stats['case_count']) * 100 if stats['case_count'] > 0 else 0.0
+            cat_avg_llm_time = (stats['llm_time'] / stats['llm_runs_timed']) * 1000 if stats['llm_runs_timed'] > 0 else None
+            cat_avg_baseline_time = (stats['baseline_time'] / stats['case_count']) * 1000 if stats['case_count'] > 0 else None
+            results['performance_details'][category] = {
+                'correctness': cat_correctness,
+                'avg_time_ms': cat_avg_llm_time,
+                'baseline_avg_time_ms': cat_avg_baseline_time,
+                'count': stats['case_count']
+            }
 
     except SyntaxError as e:
         results['error'] = f"Syntax error in generated code: {e}"
+        # Ensure performance_details is still present, even if empty
+        results['performance_details'] = results.get('performance_details', {})
     except Exception as e:
         results['error'] = f"Error executing generated code: {e}"
 
@@ -194,6 +254,7 @@ def run_single_benchmark(llm_name: str, algorithm_name: str) -> dict:
         'correctness': evaluation.get('correctness'),
         'avg_time_ms': evaluation.get('avg_time_ms'),
         'baseline_avg_time_ms': evaluation.get('baseline_avg_time_ms'),
+        'performance_details': evaluation.get('performance_details'), # Add detailed results
         'error': evaluation.get('error'),
         'generated_code': generated_code # Optionally store the code
     }
