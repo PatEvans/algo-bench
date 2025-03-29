@@ -83,12 +83,32 @@ def run_benchmark_background(task_id, llm_name):
         # Ensure DB is initialized within the thread context
         # database.init_db() # Already called at startup and potentially problematic here if DB file is locked
 
+        # --- Generate Test Cases ---
+        # Generate the test cases here to ensure consistency for this run
+        # In a production system, you might load these from a pre-generated file
+        print(f"Task {task_id}: Generating test cases...")
+        try:
+            # Use default generation parameters for now
+            categorized_test_cases = benchmark.generate_test_cases()
+            print(f"Task {task_id}: Test cases generated.")
+        except Exception as gen_e:
+            print(f"Task {task_id}: Failed to generate test cases: {gen_e}")
+            raise # Re-raise to be caught by the main exception handler
+
+        # --- Run the appropriate benchmark with the generated cases ---
         if llm_name == PYTHON_SORTED_BENCHMARK:
-            # Run benchmark using Python's built-in sorted() - no algorithm name needed
-            result = benchmark.run_python_sorted_benchmark(progress_callback=progress_callback)
+            # Run benchmark using Python's built-in sorted()
+            result = benchmark.run_python_sorted_benchmark(
+                categorized_test_cases=categorized_test_cases,
+                progress_callback=progress_callback
+            )
         else:
-            # Run benchmark using LLM generation - no algorithm name needed
-            result = benchmark.run_single_benchmark(llm_name, progress_callback=progress_callback)
+            # Run benchmark using LLM generation
+            result = benchmark.run_single_benchmark(
+                llm_name=llm_name,
+                categorized_test_cases=categorized_test_cases,
+                progress_callback=progress_callback
+            )
 
 
         # Save final result to DB
