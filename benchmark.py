@@ -378,11 +378,11 @@ if __name__ == "__main__":
            with open(runner_script_path_host, 'w', encoding='utf-8') as f_runner_script:
                f_runner_script.write(exec_wrapper_code) # Write the wrapper code to its own file
 
-            # Start the container once, keep it running
-            print("Starting persistent Docker container...")
-            container = docker_client.containers.run(
-                image=DOCKER_IMAGE,
-                command=["sleep", "infinity"], # Keep container alive
+           # Start the container once, keep it running
+           print("Starting persistent Docker container...")
+           container = docker_client.containers.run(
+               image=DOCKER_IMAGE,
+               command=["sleep", "infinity"], # Keep container alive
                 volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'ro'}}, # Mount code read-only
                 working_dir=sandbox_dir,
                 mem_limit=CONTAINER_MEM_LIMIT,
