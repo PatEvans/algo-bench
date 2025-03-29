@@ -154,5 +154,3 @@ if __name__ == '__main__':
     else:
         print("Use --generate-suite to create a new test suite file.")
         print(f"Example: python test_suite_generator.py --generate-suite --suite-file {args.suite_file}")
-
-```

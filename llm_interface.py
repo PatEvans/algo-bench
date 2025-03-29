@@ -29,16 +29,13 @@ def generate_code(llm_name: str, prompt: str) -> str | None:
             print("Error: google.generativeai library not installed. Run 'pip install google-generativeai'")
             return None
         try:
-            api_key = os.getenv("GOOGLE_API_KEY")
+            api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                print("Error: GOOGLE_API_KEY environment variable not set.")
+                print("Error: GEMINI_API_KEY environment variable not set.")
                 return None
 
             genai.configure(api_key=api_key)
-            # Using gemini-1.5-pro-latest as the API identifier.
-            # This might need adjustment if/when Google provides a specific
-            # identifier for "Gemini 2.5 Pro Exp".
-            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
 
             # Optional: Add safety settings if desired
             # safety_settings = [

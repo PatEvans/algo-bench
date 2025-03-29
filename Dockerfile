@@ -19,6 +19,7 @@ COPY benchmark.py .
 COPY database.py .
 COPY llm_interface.py .
 COPY test_suite_generator.py .
+COPY docker_exec_wrapper.py .
 COPY templates/ ./templates/
 # If you have other .py files or data files needed by the app, add COPY lines for them here
 
