@@ -343,29 +343,43 @@ def evaluate_algorithm(generated_code: str, categorized_test_cases: dict, progre
                        print(f"DEBUG BENCHMARK: Received None from exec_start stream generator (exec_id: {exec_id}). Assuming stream ended.") # DEBUG ADDED
                        break # Exit the loop if None is received
 
-                   # Now we know item is not None, proceed with unpacking
-                   stream_type, chunk = item
+                   # Log the raw item received from the generator
+                   print(f"DEBUG BENCHMARK: Raw item from generator: {repr(item)}") # DEBUG ADDED
 
-                   # Log the raw chunk received BEFORE checking type or content
-                   try:
-                       chunk_repr = repr(chunk) # Use repr to handle potential binary data safely
-                       print(f"DEBUG BENCHMARK: Received chunk - Type: {stream_type}, Size: {len(chunk) if chunk else 0}, Content (repr): {chunk_repr[:200]}{'...' if chunk and len(chunk) > 200 else ''}") # DEBUG ADDED
-                   except Exception as log_err:
-                       print(f"DEBUG BENCHMARK: Error logging received chunk: {log_err}") # DEBUG ADDED
+                   # Check if item is a tuple of length 2 before unpacking
+                   if isinstance(item, tuple) and len(item) == 2:
+                       stream_type, chunk = item
 
+                       # Log the unpacked type and chunk content correctly
+                       try:
+                           chunk_repr = repr(chunk)
+                           print(f"DEBUG BENCHMARK: Unpacked item - Stream Type: {stream_type}, Chunk Size: {len(chunk) if chunk else 0}, Chunk Content (repr): {chunk_repr[:200]}{'...' if chunk and len(chunk) > 200 else ''}") # DEBUG ADDED
+                       except Exception as log_err:
+                           print(f"DEBUG BENCHMARK: Error logging unpacked chunk details: {log_err}") # DEBUG ADDED
 
-                   # Still check if the chunk itself is None/empty, although less likely now
-                   if chunk is None:
-                       print("DEBUG BENCHMARK: Chunk is None, skipping.") # DEBUG ADDED
-                       continue
+                       # Check if the chunk itself is None/empty
+                       if chunk is None:
+                           print("DEBUG BENCHMARK: Chunk is None, skipping.") # DEBUG ADDED
+                           continue
 
-                   if stream_type == 1: # stdout (final result)
-                       print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stdout_acc.") # DEBUG ADDED
-                       stdout_acc += chunk
-                   elif stream_type == 2: # stderr (progress updates)
-                       print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stderr_buffer.") # DEBUG ADDED
-                       stderr_buffer += chunk
-                       # Process complete lines from stderr buffer
+                       if stream_type == 1: # stdout (final result)
+                           print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stdout_acc.") # DEBUG ADDED
+                           stdout_acc += chunk
+                       elif stream_type == 2: # stderr (progress updates)
+                           print(f"DEBUG BENCHMARK: Appending {len(chunk)} bytes to stderr_buffer.") # DEBUG ADDED
+                           stderr_buffer += chunk
+                           # Process complete lines from stderr buffer (existing logic below)
+                       else:
+                            # Log unexpected stream types
+                            print(f"DEBUG BENCHMARK: Received unexpected stream type: {stream_type}. Chunk: {repr(chunk)[:200]}") # DEBUG ADDED
+
+                   else:
+                       # Log if the item is not the expected tuple format
+                       print(f"WARNING/DEBUG: Received unexpected item format from generator: {repr(item)}") # DEBUG ADDED
+                       continue # Skip processing this unexpected item
+
+                   # --- Existing stderr processing logic ---
+                   if stream_type == 2 and chunk: # Only process stderr if stream_type is 2 and chunk is not None
                        lines = stderr_buffer.split(b'\n')
                        stderr_buffer = lines[-1] # Keep incomplete line in buffer
                        for line_bytes in lines[:-1]:
