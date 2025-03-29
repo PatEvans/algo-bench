@@ -77,12 +77,22 @@ def run_all_benchmarks():
         sort_algorithm = getattr(llm_module, SORT_FUNCTION_NAME)
 
         # --- 3. Iterate and Evaluate Test Cases ---
+        total_categories = len(categorized_test_cases)
+        current_category_num = 0
         for category, test_cases_in_category in categorized_test_cases.items():
+            current_category_num += 1
             cat_stats = category_results[category]
+            num_cases_in_cat = len(test_cases_in_category) # Get total cases for this category
+            print(f"--- Starting Category {current_category_num}/{total_categories}: '{category}' ({num_cases_in_cat} cases) ---", file=sys.stderr)
 
-            for test_case in test_cases_in_category:
+            # Use enumerate to get case number within category
+            for i, test_case in enumerate(test_cases_in_category):
+                case_num_in_cat = i + 1
                 overall_total_cases += 1
                 cat_stats['case_count'] += 1
+                # Log start of case processing
+                input_repr = repr(test_case[:15]) + ('...' if len(test_case) > 15 else '')
+                print(f"  Case {case_num_in_cat}/{num_cases_in_cat} (Overall {overall_total_cases}): Input={input_repr}", file=sys.stderr, end='') # Print without newline initially
                 llm_time_sec = None
                 baseline_time_sec = None
                 is_correct = False
