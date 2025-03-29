@@ -21,6 +21,8 @@ import docker # For Docker interaction
 from docker.errors import APIError, ImageNotFound, ContainerError # Specific Docker errors
 from requests.exceptions import ConnectionError as DockerConnectionError # For Docker daemon connection issues
 from contextlib import ExitStack # To manage multiple context managers (tempdir, container)
+import tarfile # To create tar archives for copying into container
+import io # To handle in-memory tar archive
 
 # Using Docker containers provides better isolation than subprocess.
 
@@ -422,12 +424,11 @@ if __name__ == "__main__":
            container = docker_client.containers.run(
                image=DOCKER_IMAGE,
                command=["sleep", "infinity"], # Keep container alive
-                # --- Temporarily remove 'ro' mode for debugging mount ---
-                volumes={temp_dir: {'bind': sandbox_dir}}, # Mount code read-write for now
-                # volumes={temp_dir: {'bind': sandbox_dir, 'mode': 'ro'}}, # Original read-only mount
-                working_dir=sandbox_dir,
-                mem_limit=CONTAINER_MEM_LIMIT,
-                cpu_shares=CONTAINER_CPU_SHARES,
+               # --- Volume mount removed, will copy files instead ---
+               # volumes={temp_dir: {'bind': sandbox_dir}},
+               working_dir=sandbox_dir, # Still useful for exec_run context
+               mem_limit=CONTAINER_MEM_LIMIT,
+               cpu_shares=CONTAINER_CPU_SHARES,
                 detach=True,
                 auto_remove=False, # We need to manage removal manually after loop
                 # Security options
@@ -438,11 +439,28 @@ if __name__ == "__main__":
            stack.callback(lambda c: (c.stop(timeout=5), c.remove(force=True)), container)
            print(f"Container {container.short_id} started.")
 
-           # --- Add delay for volume mount stabilization ---
-           print("Waiting 2 seconds for volume mount to potentially stabilize...")
-           time.sleep(2)
-           print("Proceeding with execution...")
-           # --- End delay ---
+           # --- Create sandbox directory inside container ---
+           # Although working_dir is set, explicitly create it for clarity and put_archive target
+           print(f"Creating {sandbox_dir} inside container...")
+           container.exec_run(cmd=f"mkdir -p {sandbox_dir}")
+
+           # --- Prepare and copy files into the container ---
+           print(f"Copying {llm_code_filename} and {runner_script_filename} to container:{sandbox_dir}...")
+           # Create an in-memory tar archive
+           tar_stream = io.BytesIO()
+           with tarfile.open(fileobj=tar_stream, mode='w') as tar:
+               # Add llm_sort.py
+               tar.add(llm_code_path_host, arcname=llm_code_filename)
+               # Add exec_runner.py
+               tar.add(runner_script_path_host, arcname=runner_script_filename)
+
+           tar_stream.seek(0) # Rewind the stream
+           # Copy the archive to the container
+           container.put_archive(path=sandbox_dir, data=tar_stream)
+           print("Files copied.")
+
+           # Optional: Short delay after copy might still be beneficial
+           # time.sleep(1)
 
            # Iterate through each category and its test cases
            for category, test_cases_in_category in categorized_test_cases.items():
