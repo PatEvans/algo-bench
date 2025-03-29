@@ -17,15 +17,17 @@ app.secret_key = 'super secret key' # Change this to a random secret key, maybe 
 # --- Constants ---
 # Use the default from the test_suite_generator module
 TEST_SUITE_FILENAME = test_suite_generator.DEFAULT_TEST_SUITE_FILE
-PYTHON_SORTED_BENCHMARK = "Python sorted()"
-EXAMPLE_CODE_OPTION = "Example Code"
-# Define the example code snippet (e.g., a simple bubble sort)
-EXAMPLE_CODE_SNIPPET = """
-def sort_algorithm(data):
-    data.sort()
-    return data
+# Label for the baseline benchmark run inside Docker using sorted()
+PYTHON_SORTED_BENCHMARK_LABEL = "Python sorted() [Docker]"
+# The actual code snippet for the baseline benchmark
+PYTHON_SORTED_CODE_SNIPPET = """
+# Baseline implementation using Python's built-in sorted()
+def sort_algorithm(data: list) -> list:
+    # Return a new sorted list, as required by the benchmark structure
+    return sorted(data)
 """
-AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, EXAMPLE_CODE_OPTION, "Gemini 2.5 Pro Exp"] # Add real LLM identifiers here
+# Add real LLM identifiers here. The baseline is now just another option.
+AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK_LABEL, "Gemini 2.5 Pro Exp"]
 # AVAILABLE_ALGORITHMS removed as specific algorithms are no longer selected
 
 # --- Benchmark Status Tracking ---
@@ -95,10 +97,8 @@ def admin():
 # algorithm_name parameter removed
 def run_benchmark_background(task_id, llm_name):
     """Function to run benchmark in a separate thread and update status."""
-    # Determine the algorithm label based on the LLM type
-    # Use GENERAL_ALGORITHM_NAME for both actual LLMs and the Example Code
-    is_baseline = llm_name == PYTHON_SORTED_BENCHMARK
-    algorithm_label = benchmark.BASELINE_ALGORITHM_NAME if is_baseline else benchmark.GENERAL_ALGORITHM_NAME
+    # All benchmarks run via run_single_benchmark now use the same label
+    algorithm_label = benchmark.BENCHMARKED_ALGORITHM_LABEL
     print(f"Starting background benchmark task {task_id}: {llm_name} - {algorithm_label}")
 
     def progress_callback(update_data):
@@ -152,39 +152,29 @@ def run_benchmark_background(task_id, llm_name):
         print(f"Task {task_id}: Using pre-loaded test suite.")
         # The test suite is already loaded in GLOBAL_TEST_SUITE
 
-        # --- Generate Code (if LLM), Use Example Code, or Run Baseline ---
-        if llm_name == PYTHON_SORTED_BENCHMARK:
-            # Run benchmark using Python's built-in sorted()
-            progress_callback({'status': 'Running Baseline', 'category': 'Setup'})
-            # Pass the identifier defined in this app
-            result = benchmark.run_python_sorted_benchmark(
-                categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
-                progress_callback=progress_callback,
-                python_sorted_identifier=PYTHON_SORTED_BENCHMARK
-            )
-        elif llm_name == EXAMPLE_CODE_OPTION:
-             # --- Use Example Code ---
-            progress_callback({'status': 'Using Example Code', 'category': 'Setup'})
-            generated_code_for_llm = EXAMPLE_CODE_SNIPPET
-            print(f"Task {task_id}: Using predefined example code.")
+        # --- Generate Code (if LLM) or Use Baseline Code ---
+        if llm_name == PYTHON_SORTED_BENCHMARK_LABEL:
+             # --- Use Baseline Code (sorted()) ---
+            progress_callback({'status': 'Using Baseline Code', 'category': 'Setup'})
+            generated_code_for_llm = PYTHON_SORTED_CODE_SNIPPET
+            print(f"Task {task_id}: Using baseline code (sorted()).")
 
-            # --- Update Status with Example Code BEFORE Evaluation ---
+            # --- Update Status with Baseline Code BEFORE Evaluation ---
             with STATUS_LOCK:
                 if task_id in BENCHMARK_STATUS:
                     BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
-                    BENCHMARK_STATUS[task_id]['status'] = 'Evaluating Example Code...'
+                    BENCHMARK_STATUS[task_id]['status'] = 'Evaluating Baseline Code...'
                     BENCHMARK_STATUS[task_id]['last_update'] = time.time()
             progress_callback({
-                'status': 'Evaluating Example Code...',
+                'status': 'Evaluating Baseline Code...',
                 'category': 'Setup',
                 'generated_code': generated_code_for_llm
             })
 
-            # --- Run benchmark evaluation using the example code ---
-            # Note: We still pass llm_name=EXAMPLE_CODE_OPTION so the results are tagged correctly
+            # --- Run benchmark evaluation using the baseline code ---
             result = benchmark.run_single_benchmark(
-                llm_name=llm_name, # Pass "Example Code" as the identifier
-                generated_code=generated_code_for_llm, # Pass the example code snippet
+                llm_name=llm_name, # Pass the baseline label as the identifier
+                generated_code=generated_code_for_llm, # Pass the baseline code snippet
                 categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
@@ -222,12 +212,10 @@ def run_benchmark_background(task_id, llm_name):
             )
 
         # --- Save final result to DB ---
-        # Ensure the result dict includes the generated code
+        # Ensure the result dict includes the generated code and algorithm label
         if result:
             if generated_code_for_llm:
                  result['generated_code'] = generated_code_for_llm
-            elif llm_name == PYTHON_SORTED_BENCHMARK:
-                 result['generated_code'] = "N/A - Python sorted()" # Placeholder for baseline
             # Ensure algorithm label is in the result dict before saving
             result['algorithm'] = algorithm_label # Add/overwrite algorithm label
 
@@ -310,8 +298,8 @@ def run_benchmark():
         return redirect(url_for('admin'))
     # Algorithm validation removed
 
-    # Determine the algorithm label for the flash message
-    algorithm_label = benchmark.GENERAL_ALGORITHM_NAME if llm_name != PYTHON_SORTED_BENCHMARK else benchmark.BASELINE_ALGORITHM_NAME
+    # Determine the algorithm label for the flash message (always the same now)
+    algorithm_label = benchmark.BENCHMARKED_ALGORITHM_LABEL
 
     # Generate a unique ID for this benchmark task
     task_id = str(uuid.uuid4())
