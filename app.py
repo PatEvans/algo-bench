@@ -1,16 +1,21 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import database
 import benchmark
+import database
+import benchmark
 import threading
 import uuid # For generating unique task IDs
 from collections import deque # For storing recent progress updates
 import time # For timestamping progress updates
+import os
+import json # For loading test suite
 
 app = Flask(__name__)
 # Required for flash messages
 app.secret_key = 'super secret key' # Change this to a random secret key, maybe from env var
 
-# Define available LLMs (can be moved to config later)
+# --- Constants ---
+TEST_SUITE_FILENAME = benchmark.DEFAULT_TEST_SUITE_FILE # Use the default from benchmark.py
 PYTHON_SORTED_BENCHMARK = "Python sorted()"
 AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "dummy_llm"] # Add real LLM identifiers here
 # AVAILABLE_ALGORITHMS removed as specific algorithms are no longer selected
@@ -22,6 +27,43 @@ AVAILABLE_LLMS = [PYTHON_SORTED_BENCHMARK, "dummy_llm"] # Add real LLM identifie
 BENCHMARK_STATUS = {}
 MAX_PROGRESS_UPDATES = 50 # Store the last N updates per task
 STATUS_LOCK = threading.Lock() # To safely update BENCHMARK_STATUS from multiple threads
+
+# --- Global Test Suite ---
+# Loaded once at startup
+GLOBAL_TEST_SUITE = None
+TEST_SUITE_LOAD_ERROR = None # Store any error during loading
+
+def initialize_test_suite():
+    """Generates (if needed) and loads the global test suite."""
+    global GLOBAL_TEST_SUITE, TEST_SUITE_LOAD_ERROR
+    try:
+        if not os.path.exists(TEST_SUITE_FILENAME):
+            print(f"Test suite file '{TEST_SUITE_FILENAME}' not found. Generating...")
+            # Use default generation parameters from benchmark.py's main block for consistency
+            # Or define specific parameters here if needed
+            gen_params = {
+                'size_small': 20,
+                'size_medium': 20000,
+                'size_large': 2000000,
+                'num_cases_per_type': 5
+            }
+            benchmark.generate_and_save_test_suite(TEST_SUITE_FILENAME, **gen_params)
+            print(f"Test suite generated and saved to '{TEST_SUITE_FILENAME}'.")
+        else:
+            print(f"Using existing test suite file: '{TEST_SUITE_FILENAME}'")
+
+        print("Loading test suite...")
+        GLOBAL_TEST_SUITE = benchmark.load_test_suite(TEST_SUITE_FILENAME)
+        print(f"Test suite loaded successfully ({len(GLOBAL_TEST_SUITE)} categories).")
+        TEST_SUITE_LOAD_ERROR = None # Clear any previous error
+    except Exception as e:
+        print(f"CRITICAL ERROR: Failed to load or generate test suite '{TEST_SUITE_FILENAME}': {e}")
+        TEST_SUITE_LOAD_ERROR = f"Failed to load/generate test suite: {e}"
+        GLOBAL_TEST_SUITE = None # Ensure it's None if loading failed
+
+# --- Initialize Test Suite on Startup ---
+initialize_test_suite()
+
 
 @app.route('/')
 def index():
@@ -80,36 +122,28 @@ def run_benchmark_background(task_id, llm_name):
         }
 
     try:
-        # Ensure DB is initialized within the thread context
-        # database.init_db() # Already called at startup and potentially problematic here if DB file is locked
+        # --- Check if Test Suite is Loaded ---
+        if GLOBAL_TEST_SUITE is None:
+            # Use the stored error message from startup
+            raise ValueError(f"Test suite not available. Load error: {TEST_SUITE_LOAD_ERROR}")
 
-        # --- Generate Test Cases ---
-        # Generate the test cases here to ensure consistency for this run
-        # In a production system, you might load these from a pre-generated file
-        print(f"Task {task_id}: Generating test cases...")
-        try:
-            # Use default generation parameters for now
-            categorized_test_cases = benchmark.generate_test_cases()
-            print(f"Task {task_id}: Test cases generated.")
-        except Exception as gen_e:
-            print(f"Task {task_id}: Failed to generate test cases: {gen_e}")
-            raise # Re-raise to be caught by the main exception handler
+        print(f"Task {task_id}: Using pre-loaded test suite.")
+        # The test suite is already loaded in GLOBAL_TEST_SUITE
 
-        # --- Run the appropriate benchmark with the generated cases ---
+        # --- Run the appropriate benchmark with the loaded test cases ---
         if llm_name == PYTHON_SORTED_BENCHMARK:
             # Run benchmark using Python's built-in sorted()
             result = benchmark.run_python_sorted_benchmark(
-                categorized_test_cases=categorized_test_cases,
+                categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
         else:
             # Run benchmark using LLM generation
             result = benchmark.run_single_benchmark(
                 llm_name=llm_name,
-                categorized_test_cases=categorized_test_cases,
+                categorized_test_cases=GLOBAL_TEST_SUITE, # Pass loaded suite
                 progress_callback=progress_callback
             )
-
 
         # Save final result to DB
         database.save_result(result)
