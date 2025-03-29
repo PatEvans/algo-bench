@@ -475,8 +475,8 @@ if __name__ == "__main__":
                       fi
 
                       if [ $elapsed_time -ge $timeout_seconds ]; then
-                        # Escape curly braces for f-string, use shell variable $timeout_seconds
-                        echo '--- ERROR: Timeout (${timeout_seconds}s) waiting for {script_path_cont} in container! ---' >&2
+                        # Escape $ for f-string, use shell variable $timeout_seconds
+                        echo '--- ERROR: Timeout ($${timeout_seconds}s) waiting for {script_path_cont} in container! ---' >&2
                         exit 124 # Standard timeout exit code
                       fi
 
