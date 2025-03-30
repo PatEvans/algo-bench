@@ -57,7 +57,7 @@ def main_index():
 # --- Run ---
 if __name__ == '__main__':
     # Use a different port than the individual benchmark apps might use
-    app_port = int(os.environ.get("MAIN_APP_PORT", 5000))
+    app_port = int(os.environ.get("MAIN_APP_PORT", 5001))
     print(f"Starting Main Benchmark server on port {app_port}...")
     # Set debug=False for production use
     app.run(debug=True, host='0.0.0.0', port=app_port)
