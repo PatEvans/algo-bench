@@ -322,8 +322,8 @@ class BenchmarkRunner:
 
                 exec_stream = self.docker_client.api.exec_start(exec_id=exec_id, stream=True, demux=True)
 
-                stdout_acc = b""
-                stderr_buffer = b""
+                stdout_acc = bytearray() # Use bytearray for mutable accumulation
+                stderr_buffer = bytearray() # Use bytearray for mutable accumulation
                 exit_code = None
 
                 print(f"Framework Runner: Streaming output from container exec_id: {exec_id}...")
@@ -377,7 +377,7 @@ class BenchmarkRunner:
 
         return results
 
-    def _process_exec_stream(self, exec_stream, stdout_acc: bytearray, stderr_buffer: bytearray, progress_callback):
+    def _process_exec_stream(self, exec_stream, stdout_acc: bytearray, stderr_buffer: bytearray, progress_callback: Optional[Callable[[dict], None]]):
         """Helper to process the Docker exec stream."""
         for stdout_chunk, stderr_chunk in exec_stream:
             if stdout_chunk:
@@ -401,8 +401,9 @@ class BenchmarkRunner:
                     except Exception as cb_err:
                         print(f"ERROR: Progress callback failed: {cb_err}")
 
-    def _process_final_output(self, exit_code: Optional[int], stdout_acc: bytes, stderr_buffer: bytes, results: dict):
+    def _process_final_output(self, exit_code: Optional[int], stdout_acc: bytearray, stderr_buffer: bytearray, results: dict):
          """Helper to parse final output based on exit code."""
+         # Decode bytearrays to strings for processing
          output_str_raw = stdout_acc.decode('utf-8', errors='replace')
          stderr_final = stderr_buffer.decode('utf-8', errors='replace') # Process remaining buffer
 
