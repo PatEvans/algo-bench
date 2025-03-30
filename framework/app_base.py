@@ -12,7 +12,7 @@ import time
 import os
 import json
 import traceback # For logging errors
-from .database import BenchmarkDB # Use the framework DB handler
+from framework.database import BenchmarkDB # Use the framework DB handler
 
 # --- Constants ---
 MAX_PROGRESS_UPDATES = 100 # Store more updates
@@ -268,7 +268,7 @@ def run_benchmark_background_base(task_id, llm_name, config, db: BenchmarkDB, te
             prompt = prompt_func() # Call the benchmark-specific prompt generator
             print(f"Task {task_id}: Generating code using {llm_name}...")
             # Use the framework's llm_interface
-            from . import llm_interface # Local import
+            from framework import llm_interface # Absolute import
             generated_code_for_llm = llm_interface.generate_code(llm_name, prompt)
 
             if not generated_code_for_llm:

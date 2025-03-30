@@ -15,7 +15,7 @@ from contextlib import ExitStack
 import tarfile
 import io
 import traceback
-import ctypes # Needed for serialization helper and struct definition
+# import ctypes # No longer needed here
 from typing import Callable, Optional, Any, Dict
 
 # Constants from wrapper script (must match)
@@ -25,64 +25,9 @@ WRAPPER_STDOUT_MARKER_AFTER = "---WRAPPER_STDOUT_MARKER_AFTER---"
 # Default sandbox directory inside the container
 DEFAULT_SANDBOX_DIR = "/sandbox"
 
-# --- CTypes Definitions & Helpers ---
-# Define Buffer struct commonly used in compression, might be needed by others
-class CBuffer(ctypes.Structure):
-    _fields_ = [("data", ctypes.POINTER(ctypes.c_ubyte)),
-                ("size", ctypes.c_size_t)]
-
-# Map string names to ctypes types (add more as needed)
-# This map is used by the serialization helper below
-CTYPES_MAP_FOR_SERIALIZATION = {
-    "POINTER_ubyte": ctypes.POINTER(ctypes.c_ubyte),
-    "POINTER_int": ctypes.POINTER(ctypes.c_int),
-    "size_t": ctypes.c_size_t,
-    "void": None,
-    "int": ctypes.c_int,
-    "Buffer": CBuffer,
-    # Add other types like float, double, char*, etc. if required by benchmarks
-}
-
-def get_ctype_name(ctype_obj):
-    """Inverse of get_ctype - gets string name from ctypes object for serialization."""
-    if ctype_obj is None: return "void"
-    # Reverse lookup in CTYPES_MAP_FOR_SERIALIZATION
-    for name, ctype in CTYPES_MAP_FOR_SERIALIZATION.items():
-        # Need careful comparison for complex types like POINTER
-        if isinstance(ctype_obj, type(ctype)) and name != "Buffer": # Check type match for non-structs
-             # Special handling for POINTER types
-             if name.startswith("POINTER_"):
-                  # Ensure the pointee types match
-                  if hasattr(ctype_obj, '_type_') and hasattr(ctype, '_type_') and ctype_obj._type_ == ctype._type_:
-                       return name
-             elif ctype == ctype_obj: # Direct comparison for simple types
-                  return name
-        # Check if the passed type object is a class named CBuffer
-        elif name == "Buffer" and isinstance(ctype_obj, type) and ctype_obj.__name__ == 'CBuffer':
-             return name
-
-    # Fallback or raise error
-    print(f"Warning: Could not find string name for ctype: {ctype_obj}")
-    return str(ctype_obj) # Fallback
-
-def make_signatures_serializable(signatures_dict: Dict[str, Dict]) -> Dict[str, Dict]:
-    """
-    Converts a dictionary of C function/struct signatures containing ctypes objects
-    to a JSON-serializable format using string representations of types.
-    """
-    serializable = {}
-    for name, sig_info in signatures_dict.items():
-        serializable_info = sig_info.copy() # Start with a copy
-        if "argtypes" in sig_info and sig_info["argtypes"] is not None:
-            serializable_info["argtypes"] = [get_ctype_name(t) for t in sig_info["argtypes"]]
-        if "restype" in sig_info:
-            serializable_info["restype"] = get_ctype_name(sig_info["restype"])
-        # Handle struct definitions specifically
-        if sig_info.get("is_struct", False):
-             serializable_info["is_struct"] = True # Ensure it's present
-             serializable_info["fields"] = [[fname, get_ctype_name(ftype)] for fname, ftype in sig_info.get("fields", [])]
-        serializable[name] = serializable_info
-    return serializable
+# --- CTypes Definitions & Helpers (REMOVED) ---
+# Serialization logic is no longer needed here.
+# The config files should provide string-based signatures directly.
 
 
 class BenchmarkRunner:
@@ -96,7 +41,7 @@ class BenchmarkRunner:
             config: Configuration object/module for the specific benchmark.
                     Expected attributes: BENCHMARK_TYPE, DOCKER_IMAGE,
                                          LLM_CODE_FILENAME, TEST_SUITE_FILENAME,
-                                         C_FUNCTION_NAMES (dict), C_FUNCTION_SIGNATURES (dict with ctypes),
+                                         FUNCTION_NAMES (dict), FUNCTION_SIGNATURES (dict with string types),
                                          CALCULATE_RATIO (bool), TIME_SECONDARY_FUNCTION (bool),
                                          WRAPPER_SCRIPT_PATH (path to framework/docker_exec_wrapper.py)
                                          Optional: CONTAINER_MEM_LIMIT, CONTAINER_CPU_SHARES, EXEC_TIMEOUT_SECONDS
@@ -108,17 +53,18 @@ class BenchmarkRunner:
         # Validate required config attributes
         required_attrs = [
             'BENCHMARK_TYPE', 'DOCKER_IMAGE', 'LLM_CODE_FILENAME', 'TEST_SUITE_FILENAME',
-            'C_FUNCTION_NAMES', 'C_FUNCTION_SIGNATURES', 'WRAPPER_SCRIPT_PATH'
+            'FUNCTION_NAMES', 'FUNCTION_SIGNATURES', 'WRAPPER_SCRIPT_PATH' # Use standardized names
         ]
         missing_attrs = [attr for attr in required_attrs if not hasattr(config, attr)]
         if missing_attrs:
             raise ValueError(f"Benchmark config is missing required attributes: {', '.join(missing_attrs)}")
 
-        # Make signatures serializable for passing via environment variable
-        try:
-            self.serializable_signatures = make_signatures_serializable(config.C_FUNCTION_SIGNATURES)
-        except Exception as e:
-             raise ValueError(f"Failed to serialize C function signatures from config: {e}")
+        # Config should already have serializable signatures (using string types)
+        # Validate that the required keys exist in the config dictionaries
+        if not isinstance(config.FUNCTION_NAMES, dict):
+             raise ValueError("Config attribute 'FUNCTION_NAMES' must be a dictionary.")
+        if not isinstance(config.FUNCTION_SIGNATURES, dict):
+             raise ValueError("Config attribute 'FUNCTION_SIGNATURES' must be a dictionary.")
 
         # Read wrapper script content once
         try:
@@ -297,11 +243,11 @@ class BenchmarkRunner:
 
                 # Prepare environment variables for the wrapper script
                 wrapper_env = {
-                    "LLM_CODE_SOURCE_FILE": llm_code_path_cont,
+                    # LLM_CODE_SOURCE_FILE is determined inside the wrapper based on BENCHMARK_TYPE
                     "TEST_SUITE_FILE": test_suite_path_cont,
-                    # Use config values directly
-                    "C_FUNCTION_NAMES": json.dumps(self.config.C_FUNCTION_NAMES),
-                    "C_FUNCTION_SIGNATURES": json.dumps(self.serializable_signatures),
+                    # Pass the dictionaries directly from config as JSON strings
+                    "FUNCTION_NAMES": json.dumps(self.config.FUNCTION_NAMES),
+                    "FUNCTION_SIGNATURES": json.dumps(self.config.FUNCTION_SIGNATURES),
                     "BENCHMARK_TYPE": self.config.BENCHMARK_TYPE,
                     # Use getattr for optional config values, defaulting to False -> "0"
                     "CALCULATE_RATIO": "1" if getattr(self.config, 'CALCULATE_RATIO', False) else "0",

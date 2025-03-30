@@ -62,40 +62,34 @@ BASELINE_CODE_SNIPPETS = {}
 if BASELINE_C_CODE_SNIPPET:
     BASELINE_CODE_SNIPPETS[C_COPY_BASELINE_LABEL] = BASELINE_C_CODE_SNIPPET
 
-# --- C Function Configuration ---
-# Names of the C functions the LLM should generate / baseline provides
-C_FUNCTION_NAMES = {
+# --- Function Configuration (Standardized Keys) ---
+# Names of the functions the LLM should generate / baseline provides
+FUNCTION_NAMES = {
     "primary": "compress",
     "secondary": "decompress",
     "free": "free_buffer"
 }
 
-# Ctypes definitions for the functions and structs
-# Define Buffer struct used by the functions
-class CBuffer(ctypes.Structure):
-    _fields_ = [("data", ctypes.POINTER(ctypes.c_ubyte)),
-                ("size", ctypes.c_size_t)]
-
-# Signatures of the C functions using ctypes
-# This dictionary will be passed to the BenchmarkRunner
-C_FUNCTION_SIGNATURES = {
-    # Struct definition (optional but good practice for clarity)
+# Signatures of the C functions using STRING representations of types
+# These strings MUST match keys in CTYPES_MAP in docker_exec_wrapper.py
+FUNCTION_SIGNATURES = {
+    # Struct definition using string types
     "Buffer": {
         "is_struct": True,
-        "fields": [("data", ctypes.POINTER(ctypes.c_ubyte)), ("size", ctypes.c_size_t)]
+        "fields": [("data", "POINTER_ubyte"), ("size", "size_t")]
     },
-    # Function signatures
+    # Function signatures using string types
     "compress": {
-        "argtypes": [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
-        "restype": CBuffer
+        "argtypes": ["POINTER_ubyte", "size_t"],
+        "restype": "Buffer" # Use the struct name defined above
     },
     "decompress": {
-        "argtypes": [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_size_t],
-        "restype": CBuffer
+        "argtypes": ["POINTER_ubyte", "size_t"],
+        "restype": "Buffer" # Use the struct name defined above
     },
     "free_buffer": {
-        "argtypes": [CBuffer],
-        "restype": None # void
+        "argtypes": ["Buffer"], # Use the struct name defined above
+        "restype": "void" # Use string "void" or None
     }
 }
 
