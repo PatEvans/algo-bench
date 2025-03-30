@@ -12,6 +12,7 @@ import time
 import os
 import json
 import traceback # For logging errors
+import pprint # For detailed logging
 from framework.database import BenchmarkDB # Use the framework DB handler
 
 # --- Constants ---
@@ -190,7 +191,14 @@ class BenchmarkBlueprint:
         # Convert deque to list for JSON serialization
         status_copy = status.copy()
         if 'progress' in status_copy and isinstance(status_copy['progress'], deque):
+            # Convert deque to list *before* logging/serializing
             status_copy['progress'] = list(status_copy['progress'])
+
+        # --- Enhanced Logging ---
+        print(f"DEBUG: Preparing to jsonify status for task {task_id}. Content:")
+        # Use pprint for potentially large/nested dicts
+        pprint.pprint(status_copy, stream=sys.stderr)
+        # --- End Enhanced Logging ---
 
         try:
             # Attempt to jsonify the potentially complex status dictionary
@@ -198,35 +206,54 @@ class BenchmarkBlueprint:
         except TypeError as e:
             # Log the error and return a simplified status indicating the serialization issue
             print(f"ERROR: Failed to jsonify status for task {task_id}: {e}\n{traceback.format_exc()}")
-            # Try to salvage some info, converting problematic parts to strings
-            if 'final_result' in status_copy:
-                 # Convert the whole final_result dict to its string representation
-                 # This avoids deep inspection for non-serializable types within it
-                 status_copy['final_result'] = f"Error serializing result: {e}. Raw: {repr(status_copy['final_result'])}"
-            if 'progress' in status_copy:
-                 # Progress deque was already converted to list, but items might be bad
-                 try:
-                     json.dumps(status_copy['progress']) # Test if progress list is serializable
-                 except TypeError:
-                     status_copy['progress'] = ["Error serializing one or more progress updates."]
 
-            # Remove potentially problematic generated_code if it exists and is large/complex
-            # Convert to string representation just in case it's not a string
-            if 'generated_code' in status_copy:
-                 code_repr = repr(status_copy['generated_code'])
-                 status_copy['generated_code'] = code_repr[:200] + "... (truncated due to serialization error)"
+            # --- Granular Cleanup Attempt ---
+            cleaned_status = status_copy.copy() # Work on a copy
+
+            # 1. Check final_result
+            if 'final_result' in cleaned_status:
+                try:
+                    json.dumps(cleaned_status['final_result']) # Test serialization
+                except TypeError as res_err:
+                    print(f"DEBUG: TypeError serializing final_result for task {task_id}: {res_err}")
+                    # Replace with string representation only if it fails
+                    cleaned_status['final_result'] = f"Error serializing result: {res_err}. Raw: {repr(cleaned_status['final_result'])}"
+
+            # 2. Check progress list items
+            if 'progress' in cleaned_status and isinstance(cleaned_status['progress'], list):
+                cleaned_progress = []
+                for i, item in enumerate(cleaned_status['progress']):
+                    try:
+                        json.dumps(item) # Test serialization of individual item
+                        cleaned_progress.append(item)
+                    except TypeError as prog_err:
+                        print(f"DEBUG: TypeError serializing progress item {i} for task {task_id}: {prog_err}")
+                        cleaned_progress.append(f"Error serializing progress item {i}: {prog_err}. Raw: {repr(item)}")
+                cleaned_status['progress'] = cleaned_progress
+
+            # 3. Check generated_code (less likely, but possible if not string)
+            if 'generated_code' in cleaned_status and not isinstance(cleaned_status['generated_code'], str):
+                 print(f"DEBUG: generated_code is not a string for task {task_id} (type: {type(cleaned_status['generated_code'])}). Converting.")
+                 cleaned_status['generated_code'] = repr(cleaned_status['generated_code'])
+
+            # --- End Granular Cleanup Attempt ---
 
             # Return the modified, hopefully serializable, status
             try:
-                 return jsonify(status_copy)
+                 print(f"DEBUG: Attempting jsonify again for task {task_id} after cleanup.")
+                 return jsonify(cleaned_status)
             except Exception as final_json_err:
                  # If it STILL fails, return a very basic error
                  print(f"ERROR: STILL Failed to jsonify status for task {task_id} after cleanup: {final_json_err}")
+                 # Log the cleaned status that still failed
+                 print("--- Cleaned Status that Failed ---")
+                 pprint.pprint(cleaned_status, stream=sys.stderr)
+                 print("---------------------------------")
                  return jsonify({
                      'task_id': task_id,
                      'status': 'Error',
-                     'error': f'Failed to serialize status details: {e}',
-                     'last_update': status.get('last_update')
+                     'error': f'Failed to serialize status details after cleanup: {final_json_err}. Original error: {e}',
+                     'last_update': status.get('last_update') # Use original status for last_update
                  }), 500
 
 # --- Background Task Management (Remains mostly the same, but uses config passed in) ---
