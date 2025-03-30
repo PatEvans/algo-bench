@@ -350,6 +350,8 @@ def run_all_benchmarks():
         if not primary_func_name:
              raise ValueError("Missing 'primary' function name in FUNCTION_NAMES")
         # Validation for secondary/free depends on benchmark type and flags
+        # Assign env var value to local variable for use in this function
+        should_time_secondary = TIME_SECONDARY_FUNCTION
 
         send_progress({'status': 'Setup', 'message': f"Benchmark Type: {BENCHMARK_TYPE}"})
 
