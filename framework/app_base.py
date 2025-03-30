@@ -13,6 +13,7 @@ import os
 import json
 import traceback # For logging errors
 import pprint # For detailed logging
+import math # For checking inf/nan
 from framework.database import BenchmarkDB # Use the framework DB handler
 
 # --- Constants ---
