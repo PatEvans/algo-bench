@@ -24,10 +24,12 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default-secret-key-change-m
 # --- Blueprint Discovery and Registration ---
 registered_benchmarks = []
 
-for bench_dir in BENCHMARK_DIRS:
-    try:
-        module_name = f"{bench_dir}.app"
-        # Dynamically import the app module from the benchmark directory
+# Create an application context to use url_for during setup
+with app.app_context():
+    for bench_dir in BENCHMARK_DIRS:
+        try:
+            module_name = f"{bench_dir}.app"
+            # Dynamically import the app module from the benchmark directory
         bench_app_module = importlib.import_module(module_name)
 
         # Check if the module has the expected factory function
@@ -52,8 +54,8 @@ for bench_dir in BENCHMARK_DIRS:
         print(f"ERROR: Runtime error during blueprint creation/registration from {module_name}: {e}. Is Docker running or configured correctly?")
         print(traceback.format_exc())
     except Exception as e:
-        print(f"ERROR: Unexpected error registering blueprint from {module_name}: {e}.")
-        print(traceback.format_exc()) # Print full traceback for other errors
+            print(f"ERROR: Unexpected error registering blueprint from {module_name}: {e}.")
+            print(traceback.format_exc()) # Print full traceback for other errors
 
 # --- Main Route ---
 @app.route('/')
