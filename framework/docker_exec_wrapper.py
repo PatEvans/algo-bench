@@ -23,19 +23,23 @@ from collections import defaultdict
 import subprocess # For calling gcc
 import ctypes # For loading shared library and calling C functions
 import platform # To determine shared library extension
+import importlib.util # For importing Python modules dynamically
 
 # --- Configuration via Environment Variables ---
 # These MUST be set by the calling process (framework/benchmark_runner.py)
 
-# File paths
-LLM_CODE_SOURCE_FILE = os.environ.get("LLM_CODE_SOURCE_FILE", "/sandbox/llm_code.c")
+# File paths - Determine source file based on benchmark type later
+LLM_CODE_SOURCE_FILE_C = "/sandbox/llm_code.c"
+LLM_CODE_SOURCE_FILE_PY = "/sandbox/llm_sort.py" # Example for Python sort
 TEST_SUITE_FILE = os.environ.get("TEST_SUITE_FILE", "/sandbox/test_suite.json")
 
-# C Function Names & Signatures (as JSON string)
-# Example for Compression: '{"primary": "compress", "secondary": "decompress", "free": "free_buffer"}'
-C_FUNCTION_NAMES_JSON = os.environ.get("C_FUNCTION_NAMES", '{}')
-# Example for Compression: '{"Buffer": {"is_struct": true, "fields": [["data", "POINTER_ubyte"], ["size", "size_t"]]}, "compress": {"argtypes": ["POINTER_ubyte", "size_t"], "restype": "Buffer"}, ...}'
-C_FUNCTION_SIGNATURES_JSON = os.environ.get("C_FUNCTION_SIGNATURES", '{}')
+# Function Names & Signatures (as JSON string) - Could be C or Python
+# Example C: '{"primary": "compress", "secondary": "decompress", "free": "free_buffer"}'
+# Example Py: '{"primary": "sort_algorithm"}'
+FUNCTION_NAMES_JSON = os.environ.get("FUNCTION_NAMES", '{}')
+# Example C: '{"Buffer": ..., "compress": {"argtypes": ["POINTER_ubyte", "size_t"], "restype": "Buffer"}, ...}'
+# Example Py: '{"sort_algorithm": {"argtypes": ["list_int"], "restype": "list_int"}}' # Less formal for Python
+FUNCTION_SIGNATURES_JSON = os.environ.get("FUNCTION_SIGNATURES", '{}')
 
 # Benchmark Type & Configuration
 # Determines how test suite is loaded, data prepared, correctness checked, etc.
@@ -68,7 +72,9 @@ CTYPES_MAP = {
     "void": None,
     "int": ctypes.c_int,
     "Buffer": CBuffer, # Special case for the struct
-    # Add other types like float, double, char*, etc. if required by benchmarks
+    # Add other types like float, double, char*, etc. if required by C benchmarks
+    # Python types are handled differently (passed directly or via JSON)
+    "list_int": list, # Placeholder for Python list of ints
 }
 
 # --- Helper Functions ---
@@ -89,12 +95,18 @@ def parse_json_env_var(var_name: str, json_string: str) -> dict:
         raise ValueError(f"Invalid JSON in environment variable {var_name}: {e}. Value: '{json_string}'")
 
 def get_ctype(type_name: str):
-    """Gets a ctypes type from its string name using CTYPES_MAP."""
+    """Gets a ctypes type from its string name using CTYPES_MAP. Returns None for non-ctypes."""
     if type_name is None or type_name.lower() == "void":
         return None
+    # Handle Python types separately if needed, otherwise assume ctypes
+    if type_name in ["list_int"]: # Add other Python type hints here
+        return CTYPES_MAP.get(type_name) # Return the Python type itself
+
+    # Assume ctypes otherwise
     ctype = CTYPES_MAP.get(type_name)
     if ctype is None:
-        raise TypeError(f"Unsupported ctypes type name: {type_name}")
+        # Only raise error if it wasn't a known Python type hint
+        raise TypeError(f"Unsupported type name: {type_name}")
     return ctype
 
 # --- Data Preparation & Correctness Check Dispatch ---
@@ -120,48 +132,60 @@ def get_input_size_compression(original_input: bytes) -> int:
     """Get size of original byte input."""
     return len(original_input)
 
-# --- Add similar functions for other benchmark types as needed ---
-# Example for a hypothetical integer sort benchmark type:
-# def prepare_input_sort_int_array(data_list: list[int]) -> tuple:
-#     count = len(data_list)
-#     c_array = (ctypes.c_int * count)(*data_list)
-#     return (c_array, count) # Pass the array and count
-#
-# def prepare_secondary_input_sort_int_array(primary_output: Any) -> tuple:
-#     return (None, 0) # No secondary function typically
-#
-# def get_output_data_sort_int_array(primary_output_c_array: ctypes.POINTER(ctypes.c_int), input_args: tuple) -> tuple[list[int], int]:
-#     # Assuming sort modifies in-place and primary_output is the input array pointer
-#     input_count = input_args[1] # Get count from input prep
-#     py_list = list(primary_output_c_array[:input_count])
-#     return (py_list, input_count)
-#
-# def check_correctness_sort_int_array(original_input: list[int], final_output_data: list[int]) -> bool:
-#     return sorted(original_input) == final_output_data
-#
-# def get_input_size_sort_int_array(original_input: list[int]) -> int:
-#     return len(original_input)
+# --- Python Sort Helpers ---
+
+def prepare_input_python_sort(data_list: list) -> tuple:
+    """Prepare list for Python sort function (just pass it)."""
+    # The function expects the list directly. Return as tuple for consistency.
+    return (list(data_list),) # Pass a copy to prevent modification of original test case
+
+def prepare_secondary_input_python_sort(primary_output: list) -> tuple:
+    """No secondary input needed for sort."""
+    return () # Empty tuple
+
+def get_output_data_python_sort(output_list: list, input_args: tuple) -> tuple[list, int]:
+    """Extract list and size from Python sort output."""
+    # output_list is the direct result from the sort function
+    return (output_list, len(output_list) if isinstance(output_list, list) else 0)
+
+def check_correctness_python_sort(original_input: list, final_output_data: list) -> bool:
+    """Compare output list with Python's built-in sorted()."""
+    if not isinstance(final_output_data, list): # Check if LLM returned a list
+        return False
+    # Ensure original_input is treated as a list for comparison
+    if not isinstance(original_input, list):
+         return False # Or handle appropriately if non-list inputs are possible
+    return sorted(original_input) == final_output_data
+
+def get_input_size_python_sort(original_input: list) -> int:
+    """Get size of input list."""
+    return len(original_input)
+
 
 # --- Dispatch Dictionary ---
 # Maps BENCHMARK_TYPE to the relevant helper functions
 BENCHMARK_HELPERS = {
     "c_compression": {
-        "load_suite": lambda f: load_test_suite_generic(f, decode_base64=True),
+        "is_c_benchmark": True, # Flag for C-specific steps
+        "source_file": LLM_CODE_SOURCE_FILE_C,
+        "load_suite": lambda f: load_test_suite_generic(f, decode_base64=True, expected_type=bytes),
         "prepare_primary_input": prepare_input_compression,
         "prepare_secondary_input": prepare_secondary_input_compression,
         "get_output_data": get_output_data_compression,
         "check_correctness": check_correctness_compression,
         "get_input_size": get_input_size_compression,
     },
-    # "c_sort_int_array": {
-    #     "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list),
-    #     "prepare_primary_input": prepare_input_sort_int_array,
-    #     "prepare_secondary_input": prepare_secondary_input_sort_int_array,
-    #     "get_output_data": get_output_data_sort_int_array,
-    #     "check_correctness": check_correctness_sort_int_array,
-    #     "get_input_size": get_input_size_sort_int_array,
-    # },
-    # Add entries for other benchmark types here
+    "python_sort": {
+        "is_c_benchmark": False, # Flag for Python-specific steps
+        "source_file": LLM_CODE_SOURCE_FILE_PY,
+        "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list),
+        "prepare_primary_input": prepare_input_python_sort,
+        "prepare_secondary_input": prepare_secondary_input_python_sort, # No-op
+        "get_output_data": get_output_data_python_sort,
+        "check_correctness": check_correctness_python_sort,
+        "get_input_size": get_input_size_python_sort,
+    },
+    # Add entries for other benchmark types here (e.g., c_sort_int_array)
 }
 
 
@@ -242,30 +266,30 @@ def run_all_benchmarks():
         'avg_secondary_time_ms': None,
         'avg_ratio': None,
         'error': None,
-        'performance_details': {} # For potential future use
+        'performance_details': {} # Stores per-category results if needed later
     }
-    c_func_pointers = {}
-    llm_lib = None
+    # Function pointers/references (can be C or Python)
+    func_pointers = {}
+    llm_module_or_lib = None # Can be ctypes.CDLL or Python module
     categorized_test_cases = None
-    c_function_names = {}
-    c_function_signatures = {}
+    function_names = {}
+    function_signatures = {}
     helpers = {}
 
     try:
         # --- 1. Parse Configuration & Select Helpers ---
         send_progress({'status': 'Setup', 'message': "Parsing configuration..."})
-        c_function_names = parse_json_env_var("C_FUNCTION_NAMES", C_FUNCTION_NAMES_JSON)
-        c_function_signatures = parse_json_env_var("C_FUNCTION_SIGNATURES", C_FUNCTION_SIGNATURES_JSON)
+        function_names = parse_json_env_var("FUNCTION_NAMES", FUNCTION_NAMES_JSON)
+        function_signatures = parse_json_env_var("FUNCTION_SIGNATURES", FUNCTION_SIGNATURES_JSON)
 
         # Validate required function names
-        primary_func_name = c_function_names.get('primary')
-        secondary_func_name = c_function_names.get('secondary')
-        free_func_name = c_function_names.get('free')
+        primary_func_name = function_names.get('primary')
+        secondary_func_name = function_names.get('secondary') # Optional
+        free_func_name = function_names.get('free') # Optional (mainly for C)
 
         if not primary_func_name:
-             raise ValueError("Missing 'primary' function name in C_FUNCTION_NAMES")
-        if TIME_SECONDARY_FUNCTION and not secondary_func_name:
-             raise ValueError("Missing 'secondary' function name in C_FUNCTION_NAMES when TIME_SECONDARY_FUNCTION is true")
+             raise ValueError("Missing 'primary' function name in FUNCTION_NAMES")
+        # Validation for secondary/free depends on benchmark type and flags
 
         send_progress({'status': 'Setup', 'message': f"Benchmark Type: {BENCHMARK_TYPE}"})
 
@@ -273,6 +297,26 @@ def run_all_benchmarks():
         helpers = BENCHMARK_HELPERS.get(BENCHMARK_TYPE)
         if not helpers:
             raise ValueError(f"Unsupported BENCHMARK_TYPE: {BENCHMARK_TYPE}. No helpers defined.")
+
+        # Determine if it's a C benchmark for conditional steps
+        is_c_benchmark = helpers.get("is_c_benchmark", False)
+        llm_source_file = helpers.get("source_file")
+        if not llm_source_file:
+             raise ValueError(f"Missing 'source_file' definition for BENCHMARK_TYPE: {BENCHMARK_TYPE}")
+
+        # Validate secondary/free function requirements based on type and flags
+        if is_c_benchmark:
+             if TIME_SECONDARY_FUNCTION and not secondary_func_name:
+                  raise ValueError("Missing 'secondary' function name in FUNCTION_NAMES when TIME_SECONDARY_FUNCTION is true for C benchmark")
+             # Free function is optional for C, handled later
+        else: # Python benchmark
+             if TIME_SECONDARY_FUNCTION:
+                  print("Warning: TIME_SECONDARY_FUNCTION is true, but benchmark type is Python. Ignoring secondary timing.", file=sys.stderr)
+                  TIME_SECONDARY_FUNCTION = False # Override for Python
+             if free_func_name:
+                  print("Warning: 'free' function specified in FUNCTION_NAMES, but benchmark type is Python. Ignoring.", file=sys.stderr)
+                  free_func_name = None # Override for Python
+
 
         # --- 2. Load Test Suite (Using selected helper) ---
         load_suite_func = helpers['load_suite']
@@ -282,95 +326,134 @@ def run_all_benchmarks():
         if total_overall_cases == 0:
              raise ValueError("Test suite is empty after loading/processing.")
 
+        # --- 3. Compile C Code OR Load Python Module ---
+        if is_c_benchmark:
+            # --- Compile LLM C Code ---
+            send_progress({'status': 'Setup', 'message': f"Compiling LLM C code: {llm_source_file} -> {LLM_SHARED_LIB_FILE}"})
+            if not os.path.exists(llm_source_file):
+                raise FileNotFoundError(f"LLM C source code file not found: {llm_source_file}")
 
-        # --- 3. Compile LLM C Code ---
-        send_progress({'status': 'Setup', 'message': f"Compiling LLM C code: {LLM_CODE_SOURCE_FILE} -> {LLM_SHARED_LIB_FILE}"})
-        if not os.path.exists(LLM_CODE_SOURCE_FILE):
-            raise FileNotFoundError(f"LLM C source code file not found: {LLM_CODE_SOURCE_FILE}")
+            compile_command = [
+                "gcc", "-shared", "-fPIC", "-O2", "-std=c11", # Or -std=c99
+                llm_source_file, "-o", LLM_SHARED_LIB_FILE
+            ]
+            try:
+                compile_process = subprocess.run(compile_command, check=True, capture_output=True, text=True, timeout=60)
+                print(f"GCC stdout:\n{compile_process.stdout}", file=sys.stderr)
+                print(f"GCC stderr:\n{compile_process.stderr}", file=sys.stderr)
+                send_progress({'status': 'Setup', 'message': "C code compiled successfully."})
+            except FileNotFoundError:
+                 raise RuntimeError("`gcc` compiler not found in container PATH.")
+            except subprocess.CalledProcessError as compile_err:
+                error_message = f"C code compilation failed (Exit code {compile_err.returncode}).\n" \
+                                f"Command: {' '.join(compile_command)}\nStderr:\n{compile_err.stderr}\nStdout:\n{compile_err.stdout}"
+                raise RuntimeError(error_message)
+            except subprocess.TimeoutExpired as timeout_err:
+                 raise RuntimeError(f"C code compilation timed out after {timeout_err.timeout} seconds.")
+            except Exception as e:
+                raise RuntimeError(f"An unexpected error occurred during C compilation: {e}")
 
-        compile_command = [
-            "gcc", "-shared", "-fPIC", "-O2", "-std=c11", # Or -std=c99
-            LLM_CODE_SOURCE_FILE, "-o", LLM_SHARED_LIB_FILE
-        ]
-        try:
-            compile_process = subprocess.run(compile_command, check=True, capture_output=True, text=True, timeout=60)
-            print(f"GCC stdout:\n{compile_process.stdout}", file=sys.stderr)
-            print(f"GCC stderr:\n{compile_process.stderr}", file=sys.stderr)
-            send_progress({'status': 'Setup', 'message': "C code compiled successfully."})
-        except FileNotFoundError:
-             raise RuntimeError("`gcc` compiler not found in container PATH.")
-        except subprocess.CalledProcessError as compile_err:
-            error_message = f"C code compilation failed (Exit code {compile_err.returncode}).\n" \
-                            f"Command: {' '.join(compile_command)}\nStderr:\n{compile_err.stderr}\nStdout:\n{compile_err.stdout}"
-            raise RuntimeError(error_message)
-        except subprocess.TimeoutExpired as timeout_err:
-             raise RuntimeError(f"C code compilation timed out after {timeout_err.timeout} seconds.")
-        except Exception as e:
-            raise RuntimeError(f"An unexpected error occurred during C compilation: {e}")
+            # --- Load Shared Library and Define C Function Signatures ---
+            send_progress({'status': 'Setup', 'message': f"Loading shared library: {LLM_SHARED_LIB_FILE}"})
+            try:
+                llm_module_or_lib = ctypes.CDLL(LLM_SHARED_LIB_FILE)
+            except OSError as load_err:
+                raise OSError(f"Failed to load shared library {LLM_SHARED_LIB_FILE}: {load_err}")
 
+            try:
+                # Define C signatures based on JSON config
+                defined_structs = {}
+                # First define any structs specified
+                for name, sig_info in function_signatures.items():
+                     if sig_info.get("is_struct", False):
+                          fields = []
+                          for field_name, field_type_str in sig_info.get("fields", []):
+                               ctype = get_ctype(field_type_str)
+                               if ctype is None: # Should not happen if validation passed
+                                    raise TypeError(f"Invalid type '{field_type_str}' for struct field '{field_name}'")
+                                fields.append((field_name, ctype))
+                          # Dynamically create struct class
+                          struct_class = type(name, (ctypes.Structure,), {'_fields_': fields})
+                          defined_structs[name] = struct_class
+                          CTYPES_MAP[name] = struct_class # Add to map for use in function signatures
 
-        # --- 4. Load Shared Library and Define Function Signatures ---
-        send_progress({'status': 'Setup', 'message': f"Loading shared library: {LLM_SHARED_LIB_FILE}"})
-        try:
-            llm_lib = ctypes.CDLL(LLM_SHARED_LIB_FILE)
-        except OSError as load_err:
-            raise OSError(f"Failed to load shared library {LLM_SHARED_LIB_FILE}: {load_err}")
+                # Now define function signatures using the actual function names
+                for func_type, func_name in function_names.items(): # func_type is 'primary', 'secondary', 'free'
+                    if not func_name: continue # Skip if function name is null/empty
 
-        try:
-            # Define signatures based on JSON config
-            defined_structs = {}
-            # First define any structs specified
-            for name, sig_info in c_function_signatures.items():
-                 if sig_info.get("is_struct", False):
-                      fields = []
-                      for field_name, field_type_str in sig_info.get("fields", []):
-                           fields.append((field_name, get_ctype(field_type_str)))
-                      # Dynamically create struct class
-                      struct_class = type(name, (ctypes.Structure,), {'_fields_': fields})
-                      defined_structs[name] = struct_class
-                      CTYPES_MAP[name] = struct_class # Add to map for use in function signatures
+                    sig_info = function_signatures.get(func_name)
+                    if not sig_info:
+                         # Allow missing signature for 'free' if it wasn't required/provided
+                         if func_type == 'free':
+                              print(f"Warning: Signature info missing for optional 'free' function '{func_name}'. Will not be callable.", file=sys.stderr)
+                              free_func_name = None # Ensure we don't try to call it later
+                              continue
+                         else:
+                              raise ValueError(f"Signature information missing for function '{func_name}' in FUNCTION_SIGNATURES_JSON")
 
-            # Now define function signatures using the actual function names
-            for func_type, func_name in c_function_names.items(): # func_type is 'primary', 'secondary', 'free'
-                if not func_name: continue # Skip if function name is null/empty
+                    try:
+                        c_func = getattr(llm_module_or_lib, func_name) # Get function pointer
+                    except AttributeError:
+                         # Allow missing 'free' function if it wasn't required/provided
+                         if func_type == 'free':
+                              print(f"Warning: Optional 'free' function '{func_name}' not found in shared library.", file=sys.stderr)
+                              free_func_name = None # Ensure we don't try to call it later
+                              continue
+                         else:
+                              raise NameError(f"Function '{func_name}' not found in shared library {LLM_SHARED_LIB_FILE}.")
 
-                sig_info = c_function_signatures.get(func_name)
-                if not sig_info:
-                     # Allow missing signature for 'free' if it wasn't required/provided
-                     if func_type == 'free':
-                          print(f"Warning: Signature info missing for optional 'free' function '{func_name}'. Will not be callable.", file=sys.stderr)
-                          free_func_name = None # Ensure we don't try to call it later
-                          continue
-                     else:
-                          raise ValueError(f"Signature information missing for function '{func_name}' in C_FUNCTION_SIGNATURES_JSON")
+                    # Set argtypes
+                    arg_type_names = sig_info.get("argtypes", [])
+                    c_func.argtypes = [get_ctype(name) for name in arg_type_names if get_ctype(name) is not None] # Filter out non-ctypes
 
-                try:
-                    c_func = getattr(llm_lib, func_name) # Get function pointer
-                except AttributeError:
-                     # Allow missing 'free' function if it wasn't required/provided
-                     if func_type == 'free':
-                          print(f"Warning: Optional 'free' function '{func_name}' not found in shared library.", file=sys.stderr)
-                          free_func_name = None # Ensure we don't try to call it later
-                          continue
-                     else:
-                          raise NameError(f"Function '{func_name}' not found in shared library {LLM_SHARED_LIB_FILE}.")
+                    # Set restype
+                    res_type_name = sig_info.get("restype")
+                    c_func.restype = get_ctype(res_type_name)
 
-                # Set argtypes
-                arg_type_names = sig_info.get("argtypes", [])
-                c_func.argtypes = [get_ctype(name) for name in arg_type_names]
+                    func_pointers[func_type] = c_func # Store pointer (e.g., func_pointers['primary'])
 
-                # Set restype
-                res_type_name = sig_info.get("restype")
-                c_func.restype = get_ctype(res_type_name)
+            except AttributeError as func_err:
+                 raise NameError(f"Function not found in shared library {LLM_SHARED_LIB_FILE}: {func_err}. Ensure C code defines required functions.")
+            except (TypeError, ValueError) as sig_err:
+                 raise TypeError(f"Error defining C function signatures: {sig_err}")
 
-                c_func_pointers[func_type] = c_func # Store pointer (e.g., c_func_pointers['primary'])
+            send_progress({'status': 'Setup', 'message': "C functions loaded and signatures defined."})
 
-        except AttributeError as func_err:
-             raise NameError(f"Function not found in shared library {LLM_SHARED_LIB_FILE}: {func_err}. Ensure C code defines required functions.")
-        except (TypeError, ValueError) as sig_err:
-             raise TypeError(f"Error defining C function signatures: {sig_err}")
+        else: # --- Load Python Module ---
+            send_progress({'status': 'Setup', 'message': f"Loading LLM Python module: {llm_source_file}"})
+            if not os.path.exists(llm_source_file):
+                raise FileNotFoundError(f"LLM Python source code file not found: {llm_source_file}")
 
-        send_progress({'status': 'Setup', 'message': "C functions loaded and signatures defined."})
+            module_name = os.path.splitext(os.path.basename(llm_source_file))[0] # e.g., "llm_sort"
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, llm_source_file)
+                if spec is None or spec.loader is None:
+                     raise ImportError(f"Could not create module spec for {llm_source_file}")
+                llm_module_or_lib = importlib.util.module_from_spec(spec)
+                # Add to sys.modules BEFORE exec_module to handle relative imports within the loaded module
+                sys.modules[module_name] = llm_module_or_lib
+                spec.loader.exec_module(llm_module_or_lib)
+                send_progress({'status': 'Setup', 'message': "Python module loaded successfully."})
+
+                # Get function references
+                for func_type, func_name in function_names.items():
+                    if not func_name: continue
+                    try:
+                        py_func = getattr(llm_module_or_lib, func_name)
+                        if not callable(py_func):
+                             raise TypeError(f"Attribute '{func_name}' in module {module_name} is not callable.")
+                        func_pointers[func_type] = py_func # Store Python function reference
+                    except AttributeError:
+                         # Only raise error if the function was mandatory (e.g., primary)
+                         if func_type == 'primary':
+                              raise NameError(f"Primary function '{func_name}' not found in Python module {llm_source_file}.")
+                         else:
+                              print(f"Warning: Optional function '{func_name}' not found in Python module {llm_source_file}.", file=sys.stderr)
+
+            except Exception as import_err:
+                raise ImportError(f"Error importing Python module '{module_name}' from {llm_source_file}: {type(import_err).__name__}: {import_err}\n{traceback.format_exc()}")
+
+            send_progress({'status': 'Setup', 'message': "Python functions loaded."})
 
 
         # --- 5. Iterate and Evaluate Test Cases ---
@@ -424,21 +507,21 @@ def run_all_benchmarks():
                 final_output_for_check = None # Data to compare against expected
 
                 try:
-                    # --- Prepare Input for C Primary Function (using helper) ---
-                    c_primary_args = helpers['prepare_primary_input'](original_input_data)
+                    # --- Prepare Input for Primary Function (using helper) ---
+                    primary_args = helpers['prepare_primary_input'](original_input_data)
 
                     # --- Primary Function Timing & Execution ---
                     start_primary = time.perf_counter()
-                    primary_output = c_func_pointers['primary'](*c_primary_args)
+                    primary_output = func_pointers['primary'](*primary_args)
                     end_primary = time.perf_counter()
                     primary_time_sec = end_primary - start_primary
 
                     # --- Get Primary Output Size & Data (using helper) ---
-                    # Pass original C args as they might be needed (e.g., input count for sort)
-                    primary_output_data, primary_output_size = helpers['get_output_data'](primary_output, c_primary_args)
+                    # Pass original args as they might be needed (e.g., input count for sort)
+                    primary_output_data, primary_output_size = helpers['get_output_data'](primary_output, primary_args)
 
-                    # --- Calculate Ratio (if applicable) ---
-                    if CALCULATE_RATIO:
+                    # --- Calculate Ratio (if applicable, typically only for C compression) ---
+                    if CALCULATE_RATIO and is_c_benchmark: # Only calculate ratio for C benchmarks configured to do so
                         original_size = input_size # Size of the initial input
                         output_size = primary_output_size # Size of the primary output
                         if original_size is not None and output_size is not None:
@@ -452,15 +535,16 @@ def run_all_benchmarks():
 
 
                     # --- Secondary Function Timing & Execution (if applicable) ---
-                    if TIME_SECONDARY_FUNCTION and 'secondary' in c_func_pointers:
-                        # Prepare secondary input using helper (takes primary C output)
-                        c_secondary_args = helpers['prepare_secondary_input'](primary_output)
+                    # TIME_SECONDARY_FUNCTION flag is already adjusted for Python above
+                    if TIME_SECONDARY_FUNCTION and 'secondary' in func_pointers:
+                        # Prepare secondary input using helper (takes primary output)
+                        secondary_args = helpers['prepare_secondary_input'](primary_output)
                         start_secondary = time.perf_counter()
-                        secondary_output = c_func_pointers['secondary'](*c_secondary_args)
+                        secondary_output = func_pointers['secondary'](*secondary_args)
                         end_secondary = time.perf_counter()
                         secondary_time_sec = end_secondary - start_secondary
                         # Get the final data for correctness check from secondary output (using helper)
-                        final_output_for_check, _ = helpers['get_output_data'](secondary_output, c_secondary_args)
+                        final_output_for_check, _ = helpers['get_output_data'](secondary_output, secondary_args)
                     else:
                         # If no secondary function, the primary output data is used for check
                         final_output_for_check = primary_output_data
@@ -540,32 +624,45 @@ def run_all_benchmarks():
                     })
 
                 finally:
-                    # --- IMPORTANT: Free C memory if a free function is provided and loaded ---
-                    if free_func_name and 'free' in c_func_pointers and c_func_pointers['free']:
-                        free_func = c_func_pointers['free']
+                    # --- IMPORTANT: Free C memory ONLY for C benchmarks ---
+                    if is_c_benchmark and free_func_name and 'free' in func_pointers and func_pointers['free']:
+                        free_func = func_pointers['free']
                         # Determine what needs freeing based on function signatures
-                        primary_restype_name = c_function_signatures.get(primary_func_name, {}).get('restype')
-                        secondary_restype_name = c_function_signatures.get(secondary_func_name, {}).get('restype') if secondary_func_name else None
+                        primary_sig = function_signatures.get(primary_func_name, {})
+                        secondary_sig = function_signatures.get(secondary_func_name, {}) if secondary_func_name else {}
+                        primary_restype_name = primary_sig.get('restype')
+                        secondary_restype_name = secondary_sig.get('restype')
 
                         # Free primary output if it's a type that needs freeing (e.g., Buffer)
+                        # Check if primary_output exists and is of the expected freeable type
                         if primary_output is not None and primary_restype_name == "Buffer":
-                            try:
-                                if isinstance(primary_output, CBuffer) and primary_output.data:
-                                    free_func(primary_output)
-                                    primary_output.data = None # Prevent double free if reused
-                            except Exception as free_err:
-                                print(f"Warning: Error calling free function for primary output ({primary_restype_name}): {free_err}", file=sys.stderr)
-                        # Add elif for other freeable primary return types here
+                            # Ensure primary_output is actually a CBuffer instance before freeing
+                            if isinstance(primary_output, CBuffer):
+                                try:
+                                    if primary_output.data: # Check if data pointer is valid
+                                        free_func(primary_output)
+                                        # Optional: Nullify fields after free to prevent dangling pointers if struct is reused
+                                        # primary_output.data = None
+                                        # primary_output.size = 0
+                                except Exception as free_err:
+                                    print(f"Warning: Error calling free function for primary output ({primary_restype_name}): {free_err}", file=sys.stderr)
+                            else:
+                                 print(f"Warning: Expected CBuffer for primary output but got {type(primary_output)}. Cannot free.", file=sys.stderr)
+                        # Add elif for other freeable C primary return types here
 
                         # Free secondary output if it's a type that needs freeing
                         if secondary_output is not None and secondary_restype_name == "Buffer":
-                             try:
-                                 if isinstance(secondary_output, CBuffer) and secondary_output.data:
-                                     free_func(secondary_output)
-                                     secondary_output.data = None # Prevent double free
-                             except Exception as free_err:
-                                 print(f"Warning: Error calling free function for secondary output ({secondary_restype_name}): {free_err}", file=sys.stderr)
-                        # Add elif for other freeable secondary return types here
+                             if isinstance(secondary_output, CBuffer):
+                                 try:
+                                     if secondary_output.data:
+                                         free_func(secondary_output)
+                                         # secondary_output.data = None
+                                         # secondary_output.size = 0
+                                 except Exception as free_err:
+                                     print(f"Warning: Error calling free function for secondary output ({secondary_restype_name}): {free_err}", file=sys.stderr)
+                             else:
+                                 print(f"Warning: Expected CBuffer for secondary output but got {type(secondary_output)}. Cannot free.", file=sys.stderr)
+                        # Add elif for other freeable C secondary return types here
 
 
         # --- 6. Calculate Final Aggregated Results ---
