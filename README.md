@@ -7,51 +7,50 @@ run
 within isolated Docker containers. It includes a web UI for triggering          
 benchmarks and viewing results.                                                 
                                                                                 
-## Project Structure                                                            
-                                                                                
+## Project Structure
 
-. ├── framework/              # Core reusable framework components │   
-├──      
-app_base.py         # Base Flask application logic │   ├── 
-benchmark_runner.py #
-Handles Docker execution and result parsing │   ├── database.py         
-#       
-Generic SQLite database handler │   ├── docker_exec_wrapper.py # 
-Python script  
-run inside Docker to execute C code │   ├── llm_interface.py    # 
-Interface for 
-interacting with LLMs (e.g., Gemini) │   ├── requirements.txt    # 
-Python       
-dependencies for the framework │   └── templates/          # Shared 
-HTML        
-templates for the web UI │       ├── admin.html │       ├── 
-index.html │        
-└── progress.html │ ├── compress-bench/         # Example 
-benchmark:            
-LLM-generated C compression algorithms │   ├── app.py              # 
-Flask entry
-point for the compression benchmark │   ├── benchmark.py        # 
-Prompt        
-generation specific to compression │   ├── config.py           # 
-Configuration  
-for the compression benchmark │   ├── test_suite_generator.py # 
-Generates test  
-data for compression │   ├── baseline_c_compress.c # Baseline C 
-implementation  
-(simple copy) │   ├── compression_benchmark_results.db # SQLite DB for 
-this     
-benchmark │   ├── compression_test_suite.json # Generated test data │   
-├──     
-Dockerfile          # Dockerfile to build the compression benchmark image 
-│     
-└── requirements.txt    # Python dependencies specific to compression 
-bench │   
-├── .gitignore ├── README.md               # This file └── ...                  
-# Other configuration files (e.g., for LLM APIs)                                
+```text
+.
+├── framework/              # Core reusable framework components
+│   ├── app_base.py         # Base Flask application logic
+│   ├── benchmark_runner.py # Handles Docker execution and result parsing
+│   ├── database.py         # Generic SQLite database handler
+│   ├── docker_exec_wrapper.py # Python script run inside Docker to execute C code
+│   ├── llm_interface.py    # Interface for interacting with LLMs (e.g., Gemini)
+│   ├── requirements.txt    # Python dependencies for the framework
+│   └── templates/          # Shared HTML templates for the web UI
+│       ├── admin.html
+│       ├── index.html
+│       └── progress.html
+├── compress-bench/         # Example benchmark: LLM-generated C compression algorithms
+│   ├── app.py              # Flask entry point for the compression benchmark
+│   ├── benchmark.py        # Prompt generation specific to compression
+│   ├── config.py           # Configuration for the compression benchmark
+│   ├── test_suite_generator.py # Generates test data for compression
+│   ├── baseline_c_compress.c # Baseline C implementation (simple copy)
+│   ├── compression_benchmark_results.db # SQLite DB for this benchmark
+│   ├── compression_test_suite.json # Generated test data
+│   ├── Dockerfile          # Dockerfile to build the compression benchmark image
+│   └── requirements.txt    # Python dependencies specific to compression bench
+├── sort-bench/             # Example benchmark: LLM-generated C sorting algorithms
+│   ├── app.py              # Flask entry point for the sorting benchmark
+│   ├── benchmark.py        # Prompt generation specific to sorting
+│   ├── config.py           # Configuration for the sorting benchmark
+│   ├── test_suite_generator.py # Generates test data for sorting
+│   ├── baseline_c_sort.c   # Baseline C implementation (qsort)
+│   ├── c_sort_benchmark_results.db # SQLite DB for this benchmark
+│   ├── c_sort_test_suite.json # Generated test data
+│   └── requirements.txt    # Python dependencies specific to sorting bench
+├── .gitignore
+├── Dockerfile              # Root Dockerfile for the unified environment
+├── main_app.py             # Main Flask application entry point
+├── README.md               # This file
+├── requirements.txt        # Root Python dependencies
+└── templates/              # Root HTML templates (e.g., main index)
+    └── main_index.html
+```
 
-                                                                                
-                                                                                
-**Key Components:**                                                             
+**Key Components:**
                                                                                 
 *   **`framework/`**: Contains the core, reusable logic.                        
     *   `app_base.py`: Provides the Flask application structure, 
