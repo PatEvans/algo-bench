@@ -1,8 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
-import database
-import benchmark
-import test_suite_generator # Import the new module
-import llm_interface # Import the missing module
+from . import database
+from . import benchmark
+from . import test_suite_generator # Import the new module
+from . import llm_interface # Import the missing module
 import threading
 import uuid # For generating unique task IDs
 from collections import deque # For storing recent progress updates
