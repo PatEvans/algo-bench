@@ -33,21 +33,21 @@ TEST_SUITE_FILE = os.environ.get("TEST_SUITE_FILE", "/sandbox/test_suite.json")
 
 # C Function Names & Signatures (as JSON string)
 # Example for Compression: '{"primary": "compress", "secondary": "decompress", "free": "free_buffer"}'
-# Example for Sort: '{"primary": "sort_int_array", "free": null}'
 C_FUNCTION_NAMES_JSON = os.environ.get("C_FUNCTION_NAMES", '{}')
-# Example for Compression: '{"Buffer": {"fields": [["data", "POINTER_ubyte"], ["size", "size_t"]]}, "primary": {"argtypes": ["POINTER_ubyte", "size_t"], "restype": "Buffer"}, ...}'
-# Example for Sort: '{"primary": {"argtypes": ["POINTER_int", "size_t"], "restype": null}}'
+# Example for Compression: '{"Buffer": {"is_struct": true, "fields": [["data", "POINTER_ubyte"], ["size", "size_t"]]}, "compress": {"argtypes": ["POINTER_ubyte", "size_t"], "restype": "Buffer"}, ...}'
 C_FUNCTION_SIGNATURES_JSON = os.environ.get("C_FUNCTION_SIGNATURES", '{}')
 
 # Benchmark Type & Configuration
-# Determines how test suite is loaded and correctness checked
-# e.g., "compression", "sort_int_array"
-BENCHMARK_TYPE = os.environ.get("BENCHMARK_TYPE", "compression")
-# e.g., "1" or "0", indicates if a ratio (input_size / output_size) should be calculated
-CALCULATE_RATIO = os.environ.get("CALCULATE_RATIO", "1") == "1"
-# e.g., "1" or "0", indicates if a secondary function timing is needed
-TIME_SECONDARY_FUNCTION = os.environ.get("TIME_SECONDARY_FUNCTION", "1") == "1"
+# Determines how test suite is loaded, data prepared, correctness checked, etc.
+# e.g., "c_compression", "c_sort_int_array"
+BENCHMARK_TYPE = os.environ.get("BENCHMARK_TYPE")
+if not BENCHMARK_TYPE:
+    raise ValueError("BENCHMARK_TYPE environment variable not set.")
 
+# --- Optional Configuration ---
+# Default to False/0 if not explicitly set to "1"
+CALCULATE_RATIO = os.environ.get("CALCULATE_RATIO", "0") == "1"
+TIME_SECONDARY_FUNCTION = os.environ.get("TIME_SECONDARY_FUNCTION", "0") == "1"
 
 # --- Constants ---
 # Determine shared library extension based on platform (inside container, likely .so)
@@ -97,82 +97,139 @@ def get_ctype(type_name: str):
         raise TypeError(f"Unsupported ctypes type name: {type_name}")
     return ctype
 
-# --- Test Suite Loading ---
+# --- Data Preparation & Correctness Check Dispatch ---
+# These functions will be selected based on BENCHMARK_TYPE
 
-def load_test_suite_compression(filename: str) -> dict:
-    """Loads base64 encoded byte strings for compression benchmarks."""
-    send_progress({'status': 'Setup', 'message': f"Loading BASE64 test suite: {filename}"})
-    if not os.path.exists(filename):
+def prepare_input_compression(data: bytes) -> tuple:
+    """Prepare bytes for C compression function."""
+    return (ctypes.cast(data, ctypes.POINTER(ctypes.c_ubyte)), len(data)) if data else (None, 0)
+
+def prepare_secondary_input_compression(primary_output_buffer: CBuffer) -> tuple:
+    """Prepare CBuffer output from compress for decompress input."""
+    return (primary_output_buffer.data, primary_output_buffer.size)
+
+def get_output_data_compression(output_buffer: CBuffer, input_args: tuple) -> tuple[bytes, int]:
+    """Extract bytes and size from CBuffer."""
+    return (ctypes.string_at(output_buffer.data, output_buffer.size), output_buffer.size) if output_buffer.data else (b"", 0)
+
+def check_correctness_compression(original_input: bytes, final_output_data: bytes) -> bool:
+    """Compare original bytes with final decompressed bytes."""
+    return original_input == final_output_data
+
+def get_input_size_compression(original_input: bytes) -> int:
+    """Get size of original byte input."""
+    return len(original_input)
+
+# --- Add similar functions for other benchmark types as needed ---
+# Example for a hypothetical integer sort benchmark type:
+# def prepare_input_sort_int_array(data_list: list[int]) -> tuple:
+#     count = len(data_list)
+#     c_array = (ctypes.c_int * count)(*data_list)
+#     return (c_array, count) # Pass the array and count
+#
+# def prepare_secondary_input_sort_int_array(primary_output: Any) -> tuple:
+#     return (None, 0) # No secondary function typically
+#
+# def get_output_data_sort_int_array(primary_output_c_array: ctypes.POINTER(ctypes.c_int), input_args: tuple) -> tuple[list[int], int]:
+#     # Assuming sort modifies in-place and primary_output is the input array pointer
+#     input_count = input_args[1] # Get count from input prep
+#     py_list = list(primary_output_c_array[:input_count])
+#     return (py_list, input_count)
+#
+# def check_correctness_sort_int_array(original_input: list[int], final_output_data: list[int]) -> bool:
+#     return sorted(original_input) == final_output_data
+#
+# def get_input_size_sort_int_array(original_input: list[int]) -> int:
+#     return len(original_input)
+
+# --- Dispatch Dictionary ---
+# Maps BENCHMARK_TYPE to the relevant helper functions
+BENCHMARK_HELPERS = {
+    "c_compression": {
+        "load_suite": lambda f: load_test_suite_generic(f, decode_base64=True),
+        "prepare_primary_input": prepare_input_compression,
+        "prepare_secondary_input": prepare_secondary_input_compression,
+        "get_output_data": get_output_data_compression,
+        "check_correctness": check_correctness_compression,
+        "get_input_size": get_input_size_compression,
+    },
+    # "c_sort_int_array": {
+    #     "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list),
+    #     "prepare_primary_input": prepare_input_sort_int_array,
+    #     "prepare_secondary_input": prepare_secondary_input_sort_int_array,
+    #     "get_output_data": get_output_data_sort_int_array,
+    #     "check_correctness": check_correctness_sort_int_array,
+    #     "get_input_size": get_input_size_sort_int_array,
+    # },
+    # Add entries for other benchmark types here
+}
+
+
+# --- Generic Test Suite Loading ---
+
+def load_test_suite_generic(filename: str, decode_base64: bool = False, expected_type: type = bytes) -> dict:
+    """Loads a test suite from JSON, optionally decoding base64."""
+    send_progress({'status': 'Setup', 'message': f"Loading test suite: {filename} (Base64: {decode_base64}, Type: {expected_type.__name__})"})
         raise FileNotFoundError(f"Test suite file not found: {filename}")
     with open(filename, 'r', encoding='utf-8') as f:
-        test_suite_b64 = json.load(f)
-    if not test_suite_b64:
+        test_suite_raw = json.load(f)
+    if not test_suite_raw:
         raise ValueError("Test suite file is empty or invalid.")
 
-    send_progress({'status': 'Setup', 'message': "Decoding test cases..."})
-    categorized_test_cases_bytes = defaultdict(list)
+    send_progress({'status': 'Setup', 'message': "Processing/Validating test cases..."})
+    categorized_test_cases_processed = defaultdict(list)
     total_overall_cases = 0
-    decode_errors = 0
-    for category, cases_b64 in test_suite_b64.items():
-        for i, case_b64 in enumerate(cases_b64):
+    processing_errors = 0
+
+    for category, cases_raw in test_suite_raw.items():
+        if not isinstance(cases_raw, list):
+            processing_errors += 1
+            err_msg = f"Invalid format for category '{category}'. Expected list, got {type(cases_raw)}. Skipping category."
+            print(f"Warning: {err_msg}", file=sys.stderr)
+            send_progress({'status': 'Warning', 'category': category, 'message': err_msg})
+            continue
+
+        valid_cases_in_cat = []
+        for i, case_raw in enumerate(cases_raw):
+            processed_case = None
             try:
-                missing_padding = len(case_b64) % 4
-                if missing_padding:
-                    case_b64 += '=' * (4 - missing_padding)
-                decoded_bytes = base64.b64decode(case_b64, validate=True)
-                categorized_test_cases_bytes[category].append(decoded_bytes)
+                if decode_base64:
+                    # Handle potential padding issues during decode
+                    missing_padding = len(case_raw) % 4
+                    if missing_padding:
+                        case_raw += '=' * (4 - missing_padding)
+                    processed_case = base64.b64decode(case_raw, validate=True)
+                else:
+                    processed_case = case_raw # Assume already in correct format (e.g., list for sort)
+
+                # Validate type if expected_type is provided
+                if expected_type and not isinstance(processed_case, expected_type):
+                     # Special check for list of ints if expected_type is list
+                     if expected_type is list and isinstance(processed_case, list) and all(isinstance(x, int) for x in processed_case):
+                          pass # It's a list of ints, which is valid
+                     else:
+                          raise TypeError(f"Expected type {expected_type.__name__}, got {type(processed_case).__name__}")
+
+                valid_cases_in_cat.append(processed_case)
                 total_overall_cases += 1
-            except (base64.binascii.Error, ValueError, TypeError) as decode_err:
-                decode_errors += 1
-                err_msg = f"Failed to decode base64 case {i+1} in category '{category}': {decode_err}. Skipping case."
+
+            except (base64.binascii.Error, ValueError, TypeError) as proc_err:
+                processing_errors += 1
+                err_msg = f"Failed to process/validate case {i+1} in category '{category}': {proc_err}. Skipping case."
                 print(f"Warning: {err_msg}", file=sys.stderr)
                 send_progress({'status': 'Warning', 'category': category, 'message': err_msg})
 
-    if decode_errors > 0:
-         send_progress({'status': 'Warning', 'message': f"Encountered {decode_errors} base64 decoding errors."})
-    if total_overall_cases == 0:
-        raise ValueError("Test suite contains no valid test cases after decoding.")
-
-    send_progress({'status': 'Setup', 'message': f"Decoded {total_overall_cases} test cases."})
-    return dict(categorized_test_cases_bytes)
-
-def load_test_suite_sort_int_array(filename: str) -> dict:
-    """Loads arrays of integers for sorting benchmarks."""
-    send_progress({'status': 'Setup', 'message': f"Loading INT ARRAY test suite: {filename}"})
-    if not os.path.exists(filename):
-        raise FileNotFoundError(f"Test suite file not found: {filename}")
-    with open(filename, 'r', encoding='utf-8') as f:
-        categorized_test_cases_lists = json.load(f)
-    if not categorized_test_cases_lists:
-        raise ValueError("Test suite file is empty or invalid.")
-
-    # Basic validation: ensure values are lists of integers
-    total_overall_cases = 0
-    validation_errors = 0
-    validated_cases = defaultdict(list)
-    for category, cases in categorized_test_cases_lists.items():
-        if not isinstance(cases, list):
-             print(f"Warning: Invalid format for category '{category}'. Expected list, got {type(cases)}. Skipping category.", file=sys.stderr)
-             validation_errors += 1
-             continue
-        valid_cases_in_cat = []
-        for i, case in enumerate(cases):
-            if isinstance(case, list) and all(isinstance(x, int) for x in case):
-                valid_cases_in_cat.append(case)
-                total_overall_cases += 1
-            else:
-                print(f"Warning: Invalid data in case {i+1} for category '{category}'. Expected list of ints. Skipping case.", file=sys.stderr)
-                validation_errors += 1
         if valid_cases_in_cat:
-             validated_cases[category] = valid_cases_in_cat
+            categorized_test_cases_processed[category] = valid_cases_in_cat
 
-    if validation_errors > 0:
-         send_progress({'status': 'Warning', 'message': f"Encountered {validation_errors} test case validation errors."})
+    if processing_errors > 0:
+         send_progress({'status': 'Warning', 'message': f"Encountered {processing_errors} test case processing/validation errors."})
     if total_overall_cases == 0:
-        raise ValueError("Test suite contains no valid test cases after validation.")
+        raise ValueError("Test suite contains no valid test cases after processing/validation.")
 
-    send_progress({'status': 'Setup', 'message': f"Loaded {total_overall_cases} valid test cases."})
-    return dict(validated_cases)
+    send_progress({'status': 'Setup', 'message': f"Loaded and processed {total_overall_cases} valid test cases."})
+    return dict(categorized_test_cases_processed)
+
 
 # --- Main Benchmark Execution ---
 
@@ -191,60 +248,38 @@ def run_all_benchmarks():
     categorized_test_cases = None
     c_function_names = {}
     c_function_signatures = {}
+    helpers = {}
 
     try:
-        # --- 1. Parse Configuration ---
+        # --- 1. Parse Configuration & Select Helpers ---
         send_progress({'status': 'Setup', 'message': "Parsing configuration..."})
         c_function_names = parse_json_env_var("C_FUNCTION_NAMES", C_FUNCTION_NAMES_JSON)
         c_function_signatures = parse_json_env_var("C_FUNCTION_SIGNATURES", C_FUNCTION_SIGNATURES_JSON)
 
         # Validate required function names
-        if 'primary' not in c_function_names or not c_function_names['primary']:
-             raise ValueError("Missing 'primary' function name in C_FUNCTION_NAMES")
-        if TIME_SECONDARY_FUNCTION and ('secondary' not in c_function_names or not c_function_names['secondary']):
-             raise ValueError("Missing 'secondary' function name in C_FUNCTION_NAMES when TIME_SECONDARY_FUNCTION is true")
-        # 'free' function is optional depending on whether C code allocates memory to be returned
+        primary_func_name = c_function_names.get('primary')
+        secondary_func_name = c_function_names.get('secondary')
         free_func_name = c_function_names.get('free')
+
+        if not primary_func_name:
+             raise ValueError("Missing 'primary' function name in C_FUNCTION_NAMES")
+        if TIME_SECONDARY_FUNCTION and not secondary_func_name:
+             raise ValueError("Missing 'secondary' function name in C_FUNCTION_NAMES when TIME_SECONDARY_FUNCTION is true")
 
         send_progress({'status': 'Setup', 'message': f"Benchmark Type: {BENCHMARK_TYPE}"})
 
-        # --- 2. Load Test Suite (Based on Benchmark Type) ---
-        if BENCHMARK_TYPE == "compression":
-            categorized_test_cases = load_test_suite_compression(TEST_SUITE_FILE)
-            # Define expected output type for correctness check
-            get_expected_output = lambda original_input, primary_output: original_input # Decompressed should match original
-            prepare_primary_input = lambda data: (ctypes.cast(data, ctypes.POINTER(ctypes.c_ubyte)), len(data)) if data else (None, 0)
-            prepare_secondary_input = lambda primary_output_buffer: (primary_output_buffer.data, primary_output_buffer.size)
-            get_output_bytes_and_size = lambda output_buffer: (ctypes.string_at(output_buffer.data, output_buffer.size), output_buffer.size) if output_buffer.data else (b"", 0)
+        # Select the appropriate helper functions based on BENCHMARK_TYPE
+        helpers = BENCHMARK_HELPERS.get(BENCHMARK_TYPE)
+        if not helpers:
+            raise ValueError(f"Unsupported BENCHMARK_TYPE: {BENCHMARK_TYPE}. No helpers defined.")
 
-        elif BENCHMARK_TYPE == "sort_int_array":
-            categorized_test_cases = load_test_suite_sort_int_array(TEST_SUITE_FILE)
-            # Define expected output: Python's sorted list
-            get_expected_output = lambda original_input, primary_output: sorted(original_input)
-            # Prepare input: Convert Python list to C int array
-            def prepare_primary_input(data_list):
-                count = len(data_list)
-                c_array = (ctypes.c_int * count)(*data_list)
-                return (c_array, count) # Pass the array and count
-            # No secondary function for sort
-            prepare_secondary_input = lambda primary_output_buffer: (None, 0) # Not applicable
-            # Get output: Convert C int array back to Python list (assuming primary modifies in-place or returns pointer)
-            # This depends heavily on the C function signature defined in C_FUNCTION_SIGNATURES
-            # Assuming sort modifies in-place and primary_output is the input array pointer
-            def get_output_bytes_and_size(primary_output_c_array, input_count):
-                 # primary_output_c_array is likely the same pointer passed as input
-                 # We need the count passed during input prep
-                 py_list = list(primary_output_c_array[:input_count])
-                 # Return list and its size (count)
-                 # We don't have 'bytes' here, so return the list itself and count
-                 return (py_list, input_count)
-
-        else:
-            raise ValueError(f"Unsupported BENCHMARK_TYPE: {BENCHMARK_TYPE}")
+        # --- 2. Load Test Suite (Using selected helper) ---
+        load_suite_func = helpers['load_suite']
+        categorized_test_cases = load_suite_func(TEST_SUITE_FILE)
 
         total_overall_cases = sum(len(cases) for cases in categorized_test_cases.values())
         if total_overall_cases == 0:
-             raise ValueError("Test suite is empty after loading/validation.")
+             raise ValueError("Test suite is empty after loading/processing.")
 
 
         # --- 3. Compile LLM C Code ---
@@ -294,15 +329,30 @@ def run_all_benchmarks():
                       defined_structs[name] = struct_class
                       CTYPES_MAP[name] = struct_class # Add to map for use in function signatures
 
-            # Now define function signatures
+            # Now define function signatures using the actual function names
             for func_type, func_name in c_function_names.items(): # func_type is 'primary', 'secondary', 'free'
-                if not func_name: continue # Skip if function name is null/empty (e.g., no free func)
+                if not func_name: continue # Skip if function name is null/empty
 
                 sig_info = c_function_signatures.get(func_name)
                 if not sig_info:
-                     raise ValueError(f"Signature information missing for function '{func_name}' in C_FUNCTION_SIGNATURES_JSON")
+                     # Allow missing signature for 'free' if it wasn't required/provided
+                     if func_type == 'free':
+                          print(f"Warning: Signature info missing for optional 'free' function '{func_name}'. Will not be callable.", file=sys.stderr)
+                          free_func_name = None # Ensure we don't try to call it later
+                          continue
+                     else:
+                          raise ValueError(f"Signature information missing for function '{func_name}' in C_FUNCTION_SIGNATURES_JSON")
 
-                c_func = getattr(llm_lib, func_name) # Get function pointer
+                try:
+                    c_func = getattr(llm_lib, func_name) # Get function pointer
+                except AttributeError:
+                     # Allow missing 'free' function if it wasn't required/provided
+                     if func_type == 'free':
+                          print(f"Warning: Optional 'free' function '{func_name}' not found in shared library.", file=sys.stderr)
+                          free_func_name = None # Ensure we don't try to call it later
+                          continue
+                     else:
+                          raise NameError(f"Function '{func_name}' not found in shared library {LLM_SHARED_LIB_FILE}.")
 
                 # Set argtypes
                 arg_type_names = sig_info.get("argtypes", [])
@@ -349,9 +399,9 @@ def run_all_benchmarks():
             for i, original_input_data in enumerate(test_cases_in_category):
                 case_num_in_cat = i + 1
                 current_overall_case_num += 1
-                # Represent input size/type based on benchmark
-                input_size = len(original_input_data) if isinstance(original_input_data, (bytes, list)) else None
-                input_repr = f"{type(original_input_data).__name__}[{input_size}]" if input_size is not None else type(original_input_data).__name__
+                # Get input size/representation using helper
+                input_size = helpers['get_input_size'](original_input_data)
+                input_repr = f"{type(original_input_data).__name__}[{input_size}]"
 
                 send_progress({
                     'status': 'Running', 'category': category,
@@ -373,8 +423,8 @@ def run_all_benchmarks():
                 final_output_for_check = None # Data to compare against expected
 
                 try:
-                    # --- Prepare Input for C Primary Function ---
-                    c_primary_args = prepare_primary_input(original_input_data)
+                    # --- Prepare Input for C Primary Function (using helper) ---
+                    c_primary_args = helpers['prepare_primary_input'](original_input_data)
 
                     # --- Primary Function Timing & Execution ---
                     start_primary = time.perf_counter()
@@ -382,50 +432,58 @@ def run_all_benchmarks():
                     end_primary = time.perf_counter()
                     primary_time_sec = end_primary - start_primary
 
-                    # --- Get Primary Output Size & Data (for ratio/secondary input) ---
-                    # This logic depends on the benchmark type and C function's return
-                    primary_output_data, primary_output_size = get_output_bytes_and_size(primary_output, c_primary_args[1] if BENCHMARK_TYPE == "sort_int_array" else None) # Pass input count for sort
+                    # --- Get Primary Output Size & Data (using helper) ---
+                    # Pass original C args as they might be needed (e.g., input count for sort)
+                    primary_output_data, primary_output_size = helpers['get_output_data'](primary_output, c_primary_args)
 
                     # --- Calculate Ratio (if applicable) ---
                     if CALCULATE_RATIO:
                         original_size = input_size # Size of the initial input
                         output_size = primary_output_size # Size of the primary output
                         if original_size is not None and output_size is not None:
-                            if original_size > 0 and output_size > 0:
+                            # Handle division by zero or zero input/output
+                            if output_size > 0:
                                 ratio = original_size / output_size
-                            elif original_size == 0 and output_size == 0: ratio = 1.0
-                            elif original_size > 0 and output_size == 0: ratio = float('inf')
-                            elif original_size == 0 and output_size > 0: ratio = 0.0
-                            else: ratio = None
+                            elif original_size == 0 and output_size == 0: ratio = 1.0 # Empty input to empty output
+                            elif original_size > 0 and output_size == 0: ratio = float('inf') # Non-empty input compressed to nothing
+                            else: ratio = 0.0 # Empty input to non-empty output (shouldn't happen?)
                         else: ratio = None
 
 
                     # --- Secondary Function Timing & Execution (if applicable) ---
-                    if TIME_SECONDARY_FUNCTION:
-                        c_secondary_args = prepare_secondary_input(primary_output) # Use primary output as input
+                    if TIME_SECONDARY_FUNCTION and 'secondary' in c_func_pointers:
+                        # Prepare secondary input using helper (takes primary C output)
+                        c_secondary_args = helpers['prepare_secondary_input'](primary_output)
                         start_secondary = time.perf_counter()
                         secondary_output = c_func_pointers['secondary'](*c_secondary_args)
                         end_secondary = time.perf_counter()
                         secondary_time_sec = end_secondary - start_secondary
-                        # Get the final data for correctness check from secondary output
-                        final_output_for_check, _ = get_output_bytes_and_size(secondary_output, None) # Size not needed here
+                        # Get the final data for correctness check from secondary output (using helper)
+                        final_output_for_check, _ = helpers['get_output_data'](secondary_output, c_secondary_args)
                     else:
-                        # If no secondary function, the primary output is used for check
+                        # If no secondary function, the primary output data is used for check
                         final_output_for_check = primary_output_data
 
 
-                    # --- Correctness Check ---
-                    expected_output = get_expected_output(original_input_data, primary_output)
-                    if final_output_for_check == expected_output:
-                        is_correct = True
+                    # --- Correctness Check (using helper) ---
+                    # The helper compares the original input data with the final processed data
+                    is_correct = helpers['check_correctness'](original_input_data, final_output_for_check)
+
+                    if is_correct:
                         total_cases_correct += 1
-                        # Aggregate metrics only for fully successful cases
+                        # Aggregate metrics only for fully successful cases (correctness check passed)
                         total_primary_time_sec += primary_time_sec
                         if TIME_SECONDARY_FUNCTION and secondary_time_sec is not None:
                             total_secondary_time_sec += secondary_time_sec
                         if CALCULATE_RATIO and ratio is not None and ratio != float('inf'):
                              total_ratio += ratio
-                        total_cases_processed += 1
+                        total_primary_time_sec += primary_time_sec
+                        if TIME_SECONDARY_FUNCTION and secondary_time_sec is not None:
+                            total_secondary_time_sec += secondary_time_sec
+                        # Only add finite ratios to the total
+                        if CALCULATE_RATIO and ratio is not None and ratio != float('inf') and ratio != float('-inf') and ratio == ratio: # Check for inf/nan
+                             total_ratio += ratio
+                        total_cases_processed += 1 # Increment only if correct
 
                         send_progress({
                             'status': 'Correct', 'category': category,
@@ -434,19 +492,25 @@ def run_all_benchmarks():
                             'primary_time_ms': primary_time_sec * 1000,
                             'secondary_time_ms': secondary_time_sec * 1000 if secondary_time_sec is not None else None,
                             'input_size': input_size,
-                            'output_size': output_size,
+                            'output_size': primary_output_size, # Use primary output size for reporting
                             'ratio': ratio,
                             'message': f"Case {current_overall_case_num} Correct."
                         })
                     else:
                         any_case_failed = True
-                        # Log details about the mismatch
+                        # Log details about the mismatch (use repr for clarity)
                         try:
-                             mismatch_details = f"Output type: {type(final_output_for_check)}, Expected type: {type(expected_output)}. "
-                             mismatch_details += f"Output (first 50): {repr(final_output_for_check[:50])}, Expected (first 50): {repr(expected_output[:50])}"
-                        except Exception:
-                             mismatch_details = "Could not represent mismatch details."
-                        case_error = f"Correctness mismatch: {mismatch_details}"
+                             # Generate expected output using the same helper logic as the check
+                             # Note: This assumes check_correctness helper doesn't modify input/output
+                             expected_output_for_log = "N/A"
+                             if BENCHMARK_TYPE == "c_compression": expected_output_for_log = original_input_data
+                             # elif BENCHMARK_TYPE == "c_sort_int_array": expected_output_for_log = sorted(original_input_data)
+                             # Add other types as needed
+
+                             mismatch_details = f"Output (type {type(final_output_for_check).__name__}, first 100): {repr(final_output_for_check[:100])}. Expected (type {type(expected_output_for_log).__name__}, first 100): {repr(expected_output_for_log[:100])}"
+                        except Exception as log_err:
+                             mismatch_details = f"Could not represent mismatch details: {log_err}"
+                        case_error = f"Correctness mismatch. {mismatch_details}"
                         send_progress({
                             'status': 'Incorrect', 'category': category,
                             'category_case_num': case_num_in_cat, 'category_total_cases': num_cases_in_cat,
@@ -454,13 +518,14 @@ def run_all_benchmarks():
                             'primary_time_ms': primary_time_sec * 1000 if primary_time_sec is not None else None,
                             'secondary_time_ms': secondary_time_sec * 1000 if secondary_time_sec is not None else None,
                             'input_size': input_size,
-                            'output_size': output_size,
+                            'output_size': primary_output_size, # Use primary output size
                             'error': case_error,
                             'message': f"Case {current_overall_case_num} Incorrect."
                         })
+                        # Do not increment total_cases_processed for incorrect cases
 
                 except Exception as exec_err:
-                    any_case_failed = True
+                    any_case_failed = True # Mark run as failed
                     tb_str = traceback.format_exc()
                     print(f"Error during case {current_overall_case_num} ({category}):\n{tb_str}", file=sys.stderr)
                     case_error = f"{type(exec_err).__name__}: {exec_err}"
@@ -474,49 +539,70 @@ def run_all_benchmarks():
                     })
 
                 finally:
-                    # --- IMPORTANT: Free C memory if a free function is provided ---
-                    if free_func_name and 'free' in c_func_pointers:
-                        # Free memory returned by primary and secondary functions if applicable
-                        # This assumes they return structs/pointers that need freeing.
-                        # Adjust based on actual C function behavior defined by signatures.
-                        if primary_output and c_function_signatures[c_function_names['primary']].get('restype'): # Only free if primary returns something
-                             try:
-                                 # Check if primary_output itself needs freeing or if it contains a pointer
-                                 # This logic might need refinement based on signature details
-                                 # Assuming Buffer struct for now:
-                                 if isinstance(primary_output, CBuffer) and primary_output.data:
-                                     c_func_pointers['free'](primary_output)
-                                 # Add elif for other freeable types if needed
-                             except Exception as free_err:
-                                 print(f"Warning: Error calling free function for primary output: {free_err}", file=sys.stderr)
-                        if secondary_output and c_function_signatures[c_function_names['secondary']].get('restype'): # Only free if secondary returns something
+                    # --- IMPORTANT: Free C memory if a free function is provided and loaded ---
+                    if free_func_name and 'free' in c_func_pointers and c_func_pointers['free']:
+                        free_func = c_func_pointers['free']
+                        # Determine what needs freeing based on function signatures
+                        primary_restype_name = c_function_signatures.get(primary_func_name, {}).get('restype')
+                        secondary_restype_name = c_function_signatures.get(secondary_func_name, {}).get('restype') if secondary_func_name else None
+
+                        # Free primary output if it's a type that needs freeing (e.g., Buffer)
+                        if primary_output is not None and primary_restype_name == "Buffer":
+                            try:
+                                if isinstance(primary_output, CBuffer) and primary_output.data:
+                                    free_func(primary_output)
+                                    primary_output.data = None # Prevent double free if reused
+                            except Exception as free_err:
+                                print(f"Warning: Error calling free function for primary output ({primary_restype_name}): {free_err}", file=sys.stderr)
+                        # Add elif for other freeable primary return types here
+
+                        # Free secondary output if it's a type that needs freeing
+                        if secondary_output is not None and secondary_restype_name == "Buffer":
                              try:
                                  if isinstance(secondary_output, CBuffer) and secondary_output.data:
-                                     c_func_pointers['free'](secondary_output)
-                                 # Add elif for other freeable types if needed
+                                     free_func(secondary_output)
+                                     secondary_output.data = None # Prevent double free
                              except Exception as free_err:
-                                 print(f"Warning: Error calling free function for secondary output: {free_err}", file=sys.stderr)
+                                 print(f"Warning: Error calling free function for secondary output ({secondary_restype_name}): {free_err}", file=sys.stderr)
+                        # Add elif for other freeable secondary return types here
 
 
         # --- 6. Calculate Final Aggregated Results ---
         send_progress({'status': 'Aggregating', 'message': "Calculating final results..."})
         if total_overall_cases > 0:
-            results['correctness'] = 1 if not any_case_failed and total_cases_processed == total_overall_cases else 0
+             # Correctness is 1 only if NO cases failed AND at least one case was processed successfully
+             # (Handles case where all cases error out before correctness check)
+            results['correctness'] = 1 if not any_case_failed and total_cases_processed > 0 else 0
 
-            if total_cases_processed > 0:
+            if total_cases_processed > 0: # Calculate averages only based on successfully processed cases
                 results['avg_time_ms'] = (total_primary_time_sec / total_cases_processed) * 1000
-                if TIME_SECONDARY_FUNCTION:
+                if TIME_SECONDARY_FUNCTION and total_secondary_time_sec > 0: # Check if secondary time was actually recorded
                     results['avg_secondary_time_ms'] = (total_secondary_time_sec / total_cases_processed) * 1000
-                if CALCULATE_RATIO:
-                    # Avoid division by zero if total_ratio is 0 but cases were processed
-                    results['avg_ratio'] = total_ratio / total_cases_processed if total_cases_processed > 0 else 0
-            else:
-                 results['error'] = results.get('error') or "No test cases were successfully processed."
-                 results['correctness'] = 0
+                else:
+                     results['avg_secondary_time_ms'] = None # Explicitly set to None if not timed or no successful cases
 
-        else:
+                if CALCULATE_RATIO and total_ratio > 0: # Check if ratio was calculated and > 0
+                    results['avg_ratio'] = total_ratio / total_cases_processed
+                else:
+                     results['avg_ratio'] = None # Explicitly set to None
+
+                # If correctness is 0 but some cases were processed, the error is likely the first failure encountered
+                if results['correctness'] == 0 and not results.get('error'):
+                     results['error'] = results.get('error') or "One or more test cases failed correctness check."
+
+            else: # No cases processed successfully
+                 results['error'] = results.get('error') or "No test cases were successfully processed (all failed or errored)."
+                 results['correctness'] = 0
+                 results['avg_time_ms'] = None
+                 results['avg_secondary_time_ms'] = None
+                 results['avg_ratio'] = None
+
+        else: # No test cases loaded initially
              results['error'] = "No test cases found to process."
              results['correctness'] = 0
+             results['avg_time_ms'] = None
+             results['avg_secondary_time_ms'] = None
+             results['avg_ratio'] = None
 
 
     except Exception as top_level_err:
