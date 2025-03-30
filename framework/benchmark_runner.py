@@ -364,19 +364,99 @@ class BenchmarkRunner:
                 results['error'] = error_str
                 print(f"ERROR: {error_str}")
             finally:
-                # ExitStack handles container stop/remove and tempdir cleanup
-                if container:
-                    print(f"Framework Runner: Container {container.short_id} cleanup handled by ExitStack.")
-                else:
-                    print("Framework Runner: No container was started or setup failed.")
-                # Final progress update
+                # ExitStack handles container stop/remove and tempdir cleanup automatically
+                print("Framework Runner: Benchmark execution attempt finished. Cleanup handled by ExitStack.")
+                # Final progress update (ensure it happens even on error)
                 if progress_callback:
                     final_status = 'Completed' if not results.get('error') else 'Error'
                     progress_callback({
                         'status': final_status,
                         'category': 'Finished',
                         'error': results.get('error'),
-                        'message': 'Benchmark execution finished.'
+                        'message': f'Benchmark execution finished ({final_status}).'
                     })
 
         return results
+
+    def _process_exec_stream(self, exec_stream, stdout_acc: bytearray, stderr_buffer: bytearray, progress_callback):
+        """Helper to process the Docker exec stream."""
+        for stdout_chunk, stderr_chunk in exec_stream:
+            if stdout_chunk:
+                stdout_acc.extend(stdout_chunk)
+            if stderr_chunk:
+                stderr_buffer.extend(stderr_chunk)
+                # Process complete lines from stderr for progress updates
+                lines = stderr_buffer.split(b'\n')
+                stderr_buffer[:] = lines[-1] # Keep incomplete line (modify in-place)
+                for line_bytes in lines[:-1]:
+                    line_str = line_bytes.decode('utf-8', errors='replace').strip()
+                    if not line_str: continue
+                    try:
+                        progress_json = json.loads(line_str)
+                        if progress_json.get("type") == "progress" and progress_callback:
+                            progress_callback(progress_json.get("data", {}))
+                        else:
+                            print(f"RUNNER (stderr JSON): {line_str}") # Log other JSON
+                    except json.JSONDecodeError:
+                        print(f"RUNNER (stderr raw): {line_str}") # Log raw stderr
+                    except Exception as cb_err:
+                        print(f"ERROR: Progress callback failed: {cb_err}")
+
+    def _process_final_output(self, exit_code: Optional[int], stdout_acc: bytes, stderr_buffer: bytes, results: dict):
+         """Helper to parse final output based on exit code."""
+         output_str_raw = stdout_acc.decode('utf-8', errors='replace')
+         stderr_final = stderr_buffer.decode('utf-8', errors='replace') # Process remaining buffer
+
+         if exit_code == 0:
+             try:
+                 start_index = output_str_raw.find(WRAPPER_STDOUT_MARKER_BEFORE)
+                 end_index = output_str_raw.find(WRAPPER_STDOUT_MARKER_AFTER)
+
+                 if start_index == -1 or end_index == -1 or end_index <= start_index:
+                     raise ValueError(f"Could not find expected markers in container stdout.")
+
+                 json_content_str = output_str_raw[start_index + len(WRAPPER_STDOUT_MARKER_BEFORE):end_index].strip()
+                 if not json_content_str:
+                      raise ValueError("Container stdout between markers was empty.")
+
+                 final_message = json.loads(json_content_str)
+                 if final_message.get("type") == "result":
+                     container_results = final_message.get("data", {})
+                     print("Framework Runner: Successfully parsed final result from container.")
+                     results.update(container_results) # Update host results dict
+                     # If wrapper reported an error, keep it
+                     if container_results.get('error') and not results.get('error'):
+                         results['error'] = f"Wrapper script error: {container_results['error']}"
+                 else:
+                     raise ValueError("Unexpected JSON format from wrapper stdout.")
+             except (json.JSONDecodeError, ValueError) as json_e:
+                 output_snippet = output_str_raw[:1000]
+                 stderr_snippet = stderr_final[:500]
+                 results['error'] = f"Failed to parse final JSON from container (Exit Code 0): {json_e}. Stdout:\n---\n{output_snippet}\n---\nStderr:\n---\n{stderr_snippet}\n---"
+             except Exception as parse_e:
+                  output_snippet = output_str_raw[:1000]
+                  stderr_snippet = stderr_final[:500]
+                  results['error'] = f"Unexpected error parsing container stdout (Exit Code 0): {parse_e}. Stdout:\n---\n{output_snippet}\n---\nStderr:\n---\n{stderr_snippet}\n---"
+         elif exit_code is not None:
+             stdout_snippet = output_str_raw[:500]
+             stderr_snippet = stderr_final[:500]
+             results['error'] = f"Container wrapper exited with code {exit_code}. Stderr:\n---\n{stderr_snippet}\n---\nStdout:\n---\n{stdout_snippet}\n---"
+         else: # Exit code is None (shouldn't happen if inspect worked)
+              results['error'] = f"Failed to determine container exec exit code."
+
+    def _cleanup_container(self, container):
+        """Safely stops and removes a Docker container."""
+        if not container:
+            return
+        container_id = container.short_id
+        try:
+            print(f"Framework Runner: Stopping container {container_id}...")
+            container.stop(timeout=10) # Give 10 seconds to stop gracefully
+            print(f"Framework Runner: Removing container {container_id}...")
+            container.remove(force=True) # Force remove if stop failed
+            print(f"Framework Runner: Container {container_id} cleaned up.")
+        except (APIError, DockerException) as e:
+            # Log error but don't crash the main process
+            print(f"Framework Runner WARNING: Error cleaning up container {container_id}: {e}. It might need manual removal.")
+        except Exception as e:
+             print(f"Framework Runner WARNING: Unexpected error cleaning up container {container_id}: {e}")
