@@ -14,6 +14,7 @@ import json
 import traceback # For logging errors
 import pprint # For detailed logging
 import math # For checking inf/nan
+import sys # For stderr access
 from framework.database import BenchmarkDB # Use the framework DB handler
 
 # --- Constants ---
