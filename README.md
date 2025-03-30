@@ -51,311 +51,92 @@ benchmarks and viewing results.
 ```
 
 **Key Components:**
-                                                                                
-*   **`framework/`**: Contains the core, reusable logic.                        
-    *   `app_base.py`: Provides the Flask application structure, 
-background task
-management, and status tracking.                                                
-    *   `benchmark_runner.py`: Manages Docker container lifecycle, copies 
-files,
-executes the benchmark wrapper, and retrieves results. It's configured by 
-the   
-specific benchmark's `config.py`.                                               
-    *   `docker_exec_wrapper.py`: This script runs *inside* the Docker          
-container. It receives configuration via environment variables, compiles 
-the    
-LLM's C code, loads the shared library (`.so`), runs the specified C 
-functions  
-against the test suite, times execution, checks correctness, and returns 
-results
-as JSON.                                                                        
-    *   `database.py`: A simple SQLite wrapper for storing benchmark 
-results.   
-    *   `templates/`: Shared Jinja2 templates for the web UI.                   
-*   **`compress-bench/`** (Example Benchmark): Demonstrates how to 
-implement a  
-specific benchmark using the framework.                                         
-    *   `config.py`: Defines all settings for this benchmark: Docker image 
-name,
-C function names and signatures (`ctypes`), test suite file, database 
-file,     
-prompt generation function, test suite loading function, etc.                   
-    *   `app.py`: Imports the framework's `BenchmarkApp` and the local 
-`config`,
-wires them together, and runs the Flask app for this specific benchmark.        
-    *   `benchmark.py`: Contains logic to generate the specific prompt 
-asking   
-the LLM for C compression/decompression functions.                              
-    *   `test_suite_generator.py`: Creates the 
-`compression_test_suite.json`    
-file containing various data types (random bytes, text, compressible data)      
-encoded in Base64. This is run during the Docker image build.                   
-    *   `Dockerfile`: Defines the Docker image, installing dependencies 
-(gcc,   
-Python libs), copying framework and benchmark code, and generating the 
-test     
-suite.                                                                          
-    *   `baseline_c_compress.c`: A simple C implementation used as a 
-baseline   
-for comparison.                                                                 
-                                                                                
-## Running the Compression Benchmark Example                                    
-                                                                                
-**Prerequisites:**                                                              
-                                                                                
-1.  **Docker:** Ensure Docker Desktop or Docker Engine is installed and 
-running.
-2.  **Python:** Python 3.10 or later recommended.                               
-3.  **LLM API Key:** If using an LLM like Gemini, configure your API key 
-(e.g., 
-set the `GOOGLE_API_KEY` environment variable).                                 
-                                                                                
-**Steps:**                                                                      
-                                                                                
-1.  **Build the Docker Image:**                                                 
-    Navigate to the project root directory in your terminal. Build the 
-image    
-defined in `compress-bench/Dockerfile`.                                         
-                                                                                
-    ```bash                                                                     
-    docker build -t compression-benchmark -f compress-bench/Dockerfile .        
-    ```                                                                         
-                                                                                
-2.  **Install Framework Python Dependencies:**                                  
-    It's recommended to use a virtual environment.                              
-                                                                                
-    ```bash                                                                     
-    python -m venv venv                                                         
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`          
-    pip install -r framework/requirements.txt                                   
-    # Install any specific dependencies for compress-bench if needed            
-    # pip install -r compress-bench/requirements.txt                            
-    ```                                                                         
-                                                                                
-3.  **Run the Flask App:**                                                      
-    Start the Flask application for the compression benchmark.                  
-                                                                                
-    ```bash                                                                     
-    python compress-bench/app.py                                                
-    ```                                                                         
-                                                                                
-4.  **Access the Web UI:**                                                      
-    Open your web browser and go to `http://127.0.0.1:5001` (or the port        
-specified in the output).                                                       
-    *   The main page (`/`) shows past results.                                 
-    *   The admin page (`/admin`) allows you to select an LLM (or the C         
-baseline) and start a new benchmark run.                                        
-    *   Clicking "Start Benchmark" will redirect you to a progress page 
-for that
-run.                                                                            
-                                                                                
-## Adding a New Benchmark                                                       
-                                                                                
-To add a new benchmark (e.g., for sorting):                                     
-                                                                                
-1.  Create a new directory (e.g., `sort-bench/`).                               
-2.  Mimic the structure of `compress-bench/`:                                   
-    *   Create a `config.py` defining the new benchmark's name, C               
-functions/signatures, Docker image name, test suite details, etc.               
-    *   Create a `benchmark.py` for prompt generation.                          
-    *   Create a `test_suite_generator.py` to create test data (e.g., 
-arrays of 
-numbers).                                                                       
-    *   Create a `Dockerfile` to build the specific image (installing 
-necessary 
-C libraries if any, generating the test suite).                                 
-    *   Create an `app.py` similar to `compress-bench/app.py`, importing 
-the new
-config and the framework `BenchmarkApp`.                                        
-    *   Add a baseline C implementation if desired.                             
-3.  Update the `framework/docker_exec_wrapper.py` by adding new helper 
-functions
-(for data preparation, correctness checks) and adding an entry to the           
-`BENCHMARK_HELPERS` dictionary keyed by the `BENCHMARK_TYPE` defined in 
-your new
-`config.py`.                                                                    
-4.  Build the new Docker image.                                                 
-5.  Run the new Flask app (ensure it uses a different port than other 
-benchmark 
-apps if running simultaneously).
-# LLM Algorithm Benchmarking Framework                                          
-                                                                                
-This project provides a framework for benchmarking algorithms generated by 
-Large
-Language Models (LLMs), specifically focusing on C code implementations 
-run     
-within isolated Docker containers. It includes a web UI for triggering          
-benchmarks and viewing results.                                                 
-                                                                                
-## Project Structure                                                            
-                                                                                
 
-. ├── framework/              # Core reusable framework components │   
-├──      
-app_base.py         # Base Flask application logic │   ├── 
-benchmark_runner.py #
-Handles Docker execution and result parsing │   ├── database.py         
-#       
-Generic SQLite database handler │   ├── docker_exec_wrapper.py # 
-Python script  
-run inside Docker to execute C code │   ├── llm_interface.py    # 
-Interface for 
-interacting with LLMs (e.g., Gemini) │   ├── requirements.txt    # 
-Python       
-dependencies for the framework │   └── templates/          # Shared 
-HTML        
-templates for the web UI │       ├── admin.html │       ├── 
-index.html │        
-└── progress.html │ ├── compress-bench/         # Example 
-benchmark:            
-LLM-generated C compression algorithms │   ├── app.py              # 
-Flask entry
-point for the compression benchmark │   ├── benchmark.py        # 
-Prompt        
-generation specific to compression │   ├── config.py           # 
-Configuration  
-for the compression benchmark │   ├── test_suite_generator.py # 
-Generates test  
-data for compression │   ├── baseline_c_compress.c # Baseline C 
-implementation  
-(simple copy) │   ├── compression_benchmark_results.db # SQLite DB for 
-this     
-benchmark │   ├── compression_test_suite.json # Generated test data │   
-├──     
-Dockerfile          # Dockerfile to build the compression benchmark image 
-│     
-└── requirements.txt    # Python dependencies specific to compression 
-bench │   
-├── .gitignore ├── README.md               # This file └── ...                  
-# Other configuration files (e.g., for LLM APIs)                                
+*   **`framework/`**: Contains the core, reusable logic.
+    *   `app_base.py`: Provides the Flask application structure, background task management, and status tracking.
+    *   `benchmark_runner.py`: Manages Docker container lifecycle, copies files, executes the benchmark wrapper, and retrieves results. It's configured by the specific benchmark's `config.py`.
+    *   `docker_exec_wrapper.py`: This script runs *inside* the Docker container. It receives configuration via environment variables, compiles the LLM's C code, loads the shared library (`.so`), runs the specified C functions against the test suite, times execution, checks correctness, and returns results as JSON.
+    *   `database.py`: A simple SQLite wrapper for storing benchmark results.
+    *   `templates/`: Shared Jinja2 templates for the web UI.
+*   **`compress-bench/`**, **`sort-bench/`** (Example Benchmarks): Demonstrate how to implement a specific benchmark using the framework.
+    *   `config.py`: Defines all settings for this benchmark: Docker image name, C function names and signatures (`ctypes`), test suite file, database file, prompt generation function, test suite loading function, etc.
+    *   `app.py`: Imports the framework's `BenchmarkBlueprint` and the local `config`, wires them together to create a Flask Blueprint for this specific benchmark.
+    *   `benchmark.py`: Contains logic to generate the specific prompt asking the LLM for the required C functions.
+    *   `test_suite_generator.py`: Creates the test suite JSON file containing various test cases (e.g., data to compress, arrays to sort). This is typically run once manually or via a script.
+    *   `baseline_c_*.c`: A simple C implementation used as a baseline for comparison.
+*   **`main_app.py`**: The main Flask application entry point. It discovers and registers the Blueprints from each benchmark directory (`compress-bench`, `sort-bench`, etc.).
+*   **`Dockerfile`**: Defines the unified Docker image used for running *all* benchmarks. It installs dependencies (gcc, Python libs), copies framework and benchmark code. The test suites are mounted or copied into the container at runtime, not built into the image.
 
-                                                                                
-                                                                                
-**Key Components:**                                                             
-                                                                                
-*   **`framework/`**: Contains the core, reusable logic.                        
-    *   `app_base.py`: Provides the Flask application structure, 
-background task
-management, and status tracking.                                                
-    *   `benchmark_runner.py`: Manages Docker container lifecycle, copies 
-files,
-executes the benchmark wrapper, and retrieves results. It's configured by 
-the   
-specific benchmark's `config.py`.                                               
-    *   `docker_exec_wrapper.py`: This script runs *inside* the Docker          
-container. It receives configuration via environment variables, compiles 
-the    
-LLM's C code, loads the shared library (`.so`), runs the specified C 
-functions  
-against the test suite, times execution, checks correctness, and returns 
-results
-as JSON.                                                                        
-    *   `database.py`: A simple SQLite wrapper for storing benchmark 
-results.   
-    *   `templates/`: Shared Jinja2 templates for the web UI.                   
-*   **`compress-bench/`** (Example Benchmark): Demonstrates how to 
-implement a  
-specific benchmark using the framework.                                         
-    *   `config.py`: Defines all settings for this benchmark: Docker image 
-name,
-C function names and signatures (`ctypes`), test suite file, database 
-file,     
-prompt generation function, test suite loading function, etc.                   
-    *   `app.py`: Imports the framework's `BenchmarkApp` and the local 
-`config`,
-wires them together, and runs the Flask app for this specific benchmark.        
-    *   `benchmark.py`: Contains logic to generate the specific prompt 
-asking   
-the LLM for C compression/decompression functions.                              
-    *   `test_suite_generator.py`: Creates the 
-`compression_test_suite.json`    
-file containing various data types (random bytes, text, compressible data)      
-encoded in Base64. This is run during the Docker image build.                   
-    *   `Dockerfile`: Defines the Docker image, installing dependencies 
-(gcc,   
-Python libs), copying framework and benchmark code, and generating the 
-test     
-suite.                                                                          
-    *   `baseline_c_compress.c`: A simple C implementation used as a 
-baseline   
-for comparison.                                                                 
-                                                                                
-## Running the Compression Benchmark Example                                    
-                                                                                
-**Prerequisites:**                                                              
-                                                                                
-1.  **Docker:** Ensure Docker Desktop or Docker Engine is installed and 
-running.
-2.  **Python:** Python 3.10 or later recommended.                               
-3.  **LLM API Key:** If using an LLM like Gemini, configure your API key 
-(e.g., 
-set the `GOOGLE_API_KEY` environment variable).                                 
-                                                                                
-**Steps:**                                                                      
-                                                                                
-1.  **Build the Docker Image:**                                                 
-    Navigate to the project root directory in your terminal. Build the 
-image    
-defined in `compress-bench/Dockerfile`.                                         
-                                                                                
-    ```bash                                                                     
-    docker build -t compression-benchmark -f compress-bench/Dockerfile .        
-    ```                                                                         
-                                                                                
-2.  **Install Framework Python Dependencies:**                                  
-    It's recommended to use a virtual environment.                              
-                                                                                
-    ```bash                                                                     
-    python -m venv venv                                                         
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`          
-    pip install -r framework/requirements.txt                                   
-    # Install any specific dependencies for compress-bench if needed            
-    # pip install -r compress-bench/requirements.txt                            
-    ```                                                                         
-                                                                                
-3.  **Run the Flask App:**                                                      
-    Start the Flask application for the compression benchmark.                  
-                                                                                
-    ```bash                                                                     
-    python compress-bench/app.py                                                
-    ```                                                                         
-                                                                                
-4.  **Access the Web UI:**                                                      
-    Open your web browser and go to `http://127.0.0.1:5001` (or the port        
-specified in the output).                                                       
-    *   The main page (`/`) shows past results.                                 
-    *   The admin page (`/admin`) allows you to select an LLM (or the C         
-baseline) and start a new benchmark run.                                        
-    *   Clicking "Start Benchmark" will redirect you to a progress page 
-for that
-run.                                                                            
-                                                                                
-## Adding a New Benchmark                                                       
-                                                                                
-To add a new benchmark (e.g., for sorting):                                     
-                                                                                
-1.  Create a new directory (e.g., `sort-bench/`).                               
-2.  Mimic the structure of `compress-bench/`:                                   
-    *   Create a `config.py` defining the new benchmark's name, C               
-functions/signatures, Docker image name, test suite details, etc.               
-    *   Create a `benchmark.py` for prompt generation.                          
-    *   Create a `test_suite_generator.py` to create test data (e.g., 
-arrays of 
-numbers).                                                                       
-    *   Create a `Dockerfile` to build the specific image (installing 
-necessary 
-C libraries if any, generating the test suite).                                 
-    *   Create an `app.py` similar to `compress-bench/app.py`, importing 
-the new
-config and the framework `BenchmarkApp`.                                        
-    *   Add a baseline C implementation if desired.                             
-3.  Update the `framework/docker_exec_wrapper.py` by adding new helper 
-functions
-(for data preparation, correctness checks) and adding an entry to the           
-`BENCHMARK_HELPERS` dictionary keyed by the `BENCHMARK_TYPE` defined in 
-your new
-`config.py`.                                                                    
-4.  Build the new Docker image.                                                 
-5.  Run the new Flask app (ensure it uses a different port than other 
-benchmark 
-apps if running simultaneously).
+## Running the Benchmarks
+
+**Prerequisites:**
+
+1.  **Docker:** Ensure Docker Desktop or Docker Engine is installed and running.
+2.  **Python:** Python 3.10 or later recommended.
+3.  **LLM API Key:** If using an LLM like Gemini, configure your API key (e.g., set the `GOOGLE_API_KEY` environment variable).
+
+**Steps:**
+
+1.  **Build the Unified Docker Image:**
+    Navigate to the project root directory in your terminal. Build the image defined in the root `Dockerfile`.
+
+    ```bash
+    docker build -t llm-benchmark-env .
+    ```
+
+2.  **Install Python Dependencies:**
+    It's recommended to use a virtual environment.
+
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+    pip install -r requirements.txt
+    # Install requirements for each benchmark
+    pip install -r compress-bench/requirements.txt
+    pip install -r sort-bench/requirements.txt
+    ```
+
+3.  **Generate Test Suites (if not present):**
+    Run the test suite generators for each benchmark.
+
+    ```bash
+    python compress-bench/test_suite_generator.py
+    python sort-bench/test_suite_generator.py
+    ```
+
+4.  **Run the Main Flask App:**
+    Start the main Flask application which serves all benchmarks.
+
+    ```bash
+    python main_app.py
+    ```
+
+5.  **Access the Web UI:**
+    Open your web browser and go to `http://127.0.0.1:5000` (or the port specified in the output).
+    *   The main page (`/`) lists the available benchmarks.
+    *   Navigate to a specific benchmark (e.g., `/compress/`, `/sort/`).
+    *   The benchmark index page shows past results.
+    *   The admin page (e.g., `/compress/admin`, `/sort/admin`) allows you to select an LLM (or the C baseline) and start a new benchmark run.
+    *   Clicking "Start Benchmark" will redirect you to a progress page for that run.
+
+## Adding a New Benchmark
+
+To add a new benchmark (e.g., for searching):
+
+1.  Create a new directory (e.g., `search-bench/`).
+2.  Mimic the structure of `compress-bench/` or `sort-bench/`:
+    *   Create a `config.py` defining the new benchmark's name, C functions/signatures, test suite details, `BENCHMARK_TYPE` identifier, etc.
+    *   Create a `benchmark.py` for prompt generation.
+    *   Create a `test_suite_generator.py` to create test data (e.g., arrays and elements to find).
+    *   Create an `app.py` similar to the others, importing the new config and creating a `BenchmarkBlueprint`.
+    *   Add a baseline C implementation if desired.
+    *   Add a `requirements.txt` if there are specific Python dependencies.
+3.  Update the `framework/docker_exec_wrapper.py`:
+    *   Add new helper functions (for data preparation, correctness checks, input size calculation) specific to your benchmark's logic.
+    *   Add an entry to the `BENCHMARK_HELPERS` dictionary keyed by the `BENCHMARK_TYPE` defined in your new `config.py`, mapping to your new helper functions.
+4.  Update the root `main_app.py`:
+    *   Add your new benchmark directory name to the `BENCHMARK_DIRS` list.
+5.  Update the root `requirements.txt` if necessary, and install any new dependencies (including those from `search-bench/requirements.txt`).
+6.  Generate the test suite for the new benchmark: `python search-bench/test_suite_generator.py`.
+7.  Rebuild the unified Docker image: `docker build -t llm-benchmark-env .`
+8.  Run the main Flask app: `python main_app.py`. The new benchmark should appear on the main index page.
