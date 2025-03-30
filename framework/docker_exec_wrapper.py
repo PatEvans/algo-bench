@@ -365,17 +365,18 @@ def run_all_benchmarks():
                 defined_structs = {}
                 # First define any structs specified
                 for name, sig_info in function_signatures.items():
-                     if sig_info.get("is_struct", False):
-                          fields = []
-                          for field_name, field_type_str in sig_info.get("fields", []):
-                               ctype = get_ctype(field_type_str)
-                               if ctype is None: # Should not happen if validation passed
-                                    raise TypeError(f"Invalid type '{field_type_str}' for struct field '{field_name}'")
-                                fields.append((field_name, ctype))
-                          # Dynamically create struct class
-                          struct_class = type(name, (ctypes.Structure,), {'_fields_': fields})
-                          defined_structs[name] = struct_class
-                          CTYPES_MAP[name] = struct_class # Add to map for use in function signatures
+                    # Ensure consistent 4-space indentation
+                    if sig_info.get("is_struct", False):
+                        fields = []
+                        for field_name, field_type_str in sig_info.get("fields", []):
+                            ctype = get_ctype(field_type_str)
+                            if ctype is None: # Should not happen if validation passed
+                                raise TypeError(f"Invalid type '{field_type_str}' for struct field '{field_name}'")
+                            fields.append((field_name, ctype))
+                        # Dynamically create struct class
+                        struct_class = type(name, (ctypes.Structure,), {'_fields_': fields})
+                        defined_structs[name] = struct_class
+                        CTYPES_MAP[name] = struct_class # Add to map for use in function signatures
 
                 # Now define function signatures using the actual function names
                 for func_type, func_name in function_names.items(): # func_type is 'primary', 'secondary', 'free'
