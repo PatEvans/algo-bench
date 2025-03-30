@@ -57,12 +57,11 @@ def get_ctype_name(ctype_obj):
                        return name
              elif ctype == ctype_obj: # Direct comparison for simple types
                   return name
-        elif name == "Buffer" and isinstance(ctype_obj, type) and issubclass(ctype_obj, CBuffer): # Check for Buffer struct type
+        # Check if the passed type object is the same as the CBuffer type in our map
+        elif name == "Buffer" and ctype_obj == ctype:
              return name
 
-
     # Fallback or raise error
-    print(f"Warning: Could not find string name for ctype: {ctype_obj}")
     print(f"Warning: Could not find string name for ctype: {ctype_obj}")
     return str(ctype_obj) # Fallback
 
