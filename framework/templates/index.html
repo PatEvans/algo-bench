@@ -71,8 +71,10 @@
                         <td>{{ result.benchmark_name }}</td>
                         <td>{{ result.llm }}</td>
                         <td>
-                            {% if result.correctness is not none %}
-                                {{ '%d%%' % (result.correctness * 100) if result.correctness is not none and result.correctness <= 1 else '%d' % result.correctness }} <!-- Handle 0/1 or percentage -->
+                            {% if result.correctness == 1 %}
+                                <span style="color: green;">Yes</span>
+                            {% elif result.correctness == 0 %}
+                                <span style="color: red;">No</span>
                             {% else %}
                                 N/A
                             {% endif %}
