@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Benchmark Progress</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #progress-log {
+            height: 400px;
+            overflow-y: scroll;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #f8f9fa;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap; /* Wrap long lines */
+            word-wrap: break-word;
+        }
+        .progress-bar { transition: width 0.1s ease-in-out; }
+        .status-badge { font-size: 1.1em; }
+        .code-block {
+            background-color: #e9ecef;
+            border: 1px solid #ced4da;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 300px; /* Limit height */
+            overflow-y: auto; /* Add scrollbar */
+            white-space: pre-wrap; /* Preserve whitespace and wrap */
+            word-wrap: break-word; /* Break long words */
+            font-family: monospace;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        .log-entry { margin-bottom: 5px; padding-bottom: 5px; border-bottom: 1px dashed #eee; }
+        .log-status-Running { color: #007bff; }
+        .log-status-Correct { color: #198754; }
+        .log-status-Incorrect { color: #dc3545; }
+        .log-status-Error { color: #dc3545; font-weight: bold; }
+        .log-status-Setup { color: #6c757d; }
+        .log-status-Finished { color: #198754; font-weight: bold; }
+        .log-status-Completed { color: #198754; font-weight: bold; }
+        .log-status-Aggregating { color: #0dcaf0; }
+        .log-status-Warning { color: #ffc107; }
+        .log-timestamp { font-size: 0.8em; color: #6c757d; margin-right: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Benchmark Progress</h1>
+        <p><a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Results</a></p>
+
+        <div id="status-area">
+            <p><strong>Task ID:</strong> <span id="task-id">{{ task_id }}</span></p>
+            <p><strong>Benchmark:</strong> <span id="benchmark-name">Loading...</span></p>
+            <p><strong>LLM:</strong> <span id="llm-name">Loading...</span></p>
+            <p><strong>Status:</strong> <span id="status" class="badge status-badge bg-secondary">Loading...</span></p>
+            <p><strong>Progress:</strong> <span id="progress-text">0/0</span></p>
+            <div class="progress" role="progressbar" aria-label="Benchmark progress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0%</div>
+            </div>
+        </div>
+
+        <div id="generated-code-area" style="display: none;" class="mt-3">
+            <h2>Generated Code:</h2>
+            <div id="generated-code-block" class="code-block"></div>
+        </div>
+
+        <div id="final-result-area" style="display: none;" class="mt-3">
+            <h2>Final Result:</h2>
+            <pre id="final-result" class="code-block bg-light"></pre>
+        </div>
+
+        <h2>Progress Log:</h2>
+        <div id="progress-log">
+            <p>Waiting for progress updates...</p>
+        </div>
+
+    </div>
+
+    <script>
+        const taskId = "{{ task_id }}";
+        const statusElement = document.getElementById('status');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const progressLog = document.getElementById('progress-log');
+        const llmNameElement = document.getElementById('llm-name');
+        const benchmarkNameElement = document.getElementById('benchmark-name');
+        const generatedCodeArea = document.getElementById('generated-code-area');
+        const generatedCodeBlock = document.getElementById('generated-code-block');
+        const finalResultArea = document.getElementById('final-result-area');
+        const finalResultElement = document.getElementById('final-result');
+
+        let intervalId = null;
+        let initialLoad = true; // Flag for first load
+
+        function updateProgress() {
+            fetch(`/benchmark_status/${taskId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // Update header info only on first load or if changed
+                    if (initialLoad) {
+                        llmNameElement.textContent = data.llm || 'N/A';
+                        benchmarkNameElement.textContent = data.algorithm || 'N/A'; // 'algorithm' key holds benchmark name in status
+                        initialLoad = false;
+                    }
+
+                    // Update Status Badge
+                    statusElement.textContent = data.status || 'Unknown';
+                    statusElement.className = `badge status-badge bg-${getStatusColor(data.status)}`;
+
+                    // Update Progress Bar
+                    let progressPercent = 0;
+                    let currentCase = data.current_case || 0;
+                    let totalCases = data.total_cases || 0;
+                    if (totalCases > 0) {
+                        progressPercent = Math.round((currentCase / totalCases) * 100);
+                    } else if (data.status === 'Completed' || data.status === 'Error') {
+                        progressPercent = 100; // Show 100% on completion/error even if total cases unknown
+                    }
+                    progressBar.style.width = `${progressPercent}%`;
+                    progressBar.textContent = `${progressPercent}%`;
+                    progressBar.setAttribute('aria-valuenow', progressPercent);
+                    progressText.textContent = `${currentCase}/${totalCases || '?'}`;
+
+                    // Animate progress bar only while running
+                    if (data.status === 'Running' || data.status === 'Initializing' || data.status === 'Aggregating') {
+                        progressBar.classList.add('progress-bar-animated');
+                    } else {
+                        progressBar.classList.remove('progress-bar-animated');
+                    }
+
+                    // Display Generated Code if available
+                    if (data.generated_code && generatedCodeArea.style.display === 'none') {
+                        generatedCodeBlock.textContent = data.generated_code;
+                        generatedCodeArea.style.display = 'block';
+                    }
+
+                    // Update Progress Log
+                    progressLog.innerHTML = ''; // Clear previous log entries
+                    if (data.progress && data.progress.length > 0) {
+                        data.progress.forEach(entry => {
+                            const logEntryDiv = document.createElement('div');
+                            logEntryDiv.classList.add('log-entry');
+
+                            const timestampSpan = document.createElement('span');
+                            timestampSpan.classList.add('log-timestamp');
+                            timestampSpan.textContent = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleTimeString() : '';
+
+                            const statusSpan = document.createElement('span');
+                            const statusClass = `log-status-${entry.status || 'Unknown'}`;
+                            statusSpan.classList.add(statusClass);
+                            statusSpan.textContent = `[${entry.status || 'Info'}] `;
+
+                            const messageSpan = document.createElement('span');
+                            messageSpan.textContent = formatProgressMessage(entry);
+
+                            logEntryDiv.appendChild(timestampSpan);
+                            logEntryDiv.appendChild(statusSpan);
+                            logEntryDiv.appendChild(messageSpan);
+                            progressLog.appendChild(logEntryDiv);
+                        });
+                        // Scroll to bottom
+                        progressLog.scrollTop = progressLog.scrollHeight;
+                    } else {
+                        progressLog.innerHTML = '<p>No progress updates yet...</p>';
+                    }
+
+                    // Check if benchmark finished
+                    if (data.status === 'Completed' || data.status === 'Error') {
+                        clearInterval(intervalId);
+                        intervalId = null; // Stop polling
+                        console.log("Benchmark finished. Stopping updates.");
+                        // Display final result
+                        if(data.final_result) {
+                            finalResultElement.textContent = JSON.stringify(data.final_result, null, 2);
+                            finalResultArea.style.display = 'block';
+                        }
+                         // Ensure progress bar is at 100% and not animated
+                        progressBar.style.width = `100%`;
+                        progressBar.textContent = `100%`;
+                        progressBar.classList.remove('progress-bar-animated');
+                        if (data.status === 'Error') {
+                             progressBar.classList.add('bg-danger');
+                        } else {
+                             progressBar.classList.add('bg-success');
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching benchmark status:', error);
+                    statusElement.textContent = 'Error fetching status';
+                    statusElement.className = 'badge status-badge bg-danger';
+                    // Optionally stop polling on fetch error
+                    // clearInterval(intervalId);
+                    // intervalId = null;
+                });
+        }
+
+        function getStatusColor(status) {
+            switch (status) {
+                case 'Initializing':
+                case 'Setup':
+                    return 'secondary';
+                case 'Running':
+                case 'Aggregating':
+                    return 'info';
+                case 'Correct': // Individual case status
+                    return 'success'; // Use success color for correct cases in log, but maybe info for overall?
+                case 'Completed':
+                    return 'success';
+                case 'Incorrect': // Individual case status
+                case 'Error':
+                    return 'danger';
+                case 'Warning':
+                     return 'warning';
+                default:
+                    return 'secondary';
+            }
+        }
+
+        function formatProgressMessage(entry) {
+            // Customize how progress entry data is displayed in the log
+            let msg = entry.message || '';
+            if (entry.category) msg = `(${entry.category}) ${msg}`;
+            if (entry.current_case && entry.total_cases) {
+                 msg += ` [Case ${entry.current_case}/${entry.total_cases}]`;
+            }
+            if (entry.error) msg += ` Error: ${entry.error}`;
+            // Add more details based on keys present in entry if needed
+            // e.g., timing, ratio for specific case updates
+            if (entry.primary_time_ms !== undefined) msg += ` (Time: ${entry.primary_time_ms.toFixed(2)}ms`;
+            if (entry.secondary_time_ms !== undefined) msg += `, Secondary: ${entry.secondary_time_ms.toFixed(2)}ms`;
+            if (entry.ratio !== undefined && entry.ratio !== null) msg += `, Ratio: ${entry.ratio.toFixed(2)}`;
+            if (entry.primary_time_ms !== undefined) msg += `)`; // Closing parenthesis for timing info
+
+            return msg;
+        }
+
+
+        // Start polling
+        updateProgress(); // Initial call
+        intervalId = setInterval(updateProgress, 2000); // Poll every 2 seconds
+
+        // Optional: Stop polling if the page is hidden to save resources
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (intervalId) {
+                    // console.log("Page hidden, pausing updates.");
+                    // clearInterval(intervalId); // Keep polling in background for now
+                }
+            } else {
+                 if (intervalId) { // Resume polling only if it was running
+                    // console.log("Page visible, resuming updates.");
+                    // intervalId = setInterval(updateProgress, 2000);
+                    updateProgress(); // Update immediately on becoming visible
+                 }
+            }
+        });
+
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

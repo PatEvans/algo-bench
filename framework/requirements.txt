@@ -1,0 +1,5 @@
+# Common requirements for the benchmark framework
+flask
+docker
+google-generativeai
+requests # Often a dependency of docker, but good to list explicitly
