@@ -170,6 +170,7 @@ BENCHMARK_HELPERS = {
 def load_test_suite_generic(filename: str, decode_base64: bool = False, expected_type: type = bytes) -> dict:
     """Loads a test suite from JSON, optionally decoding base64."""
     send_progress({'status': 'Setup', 'message': f"Loading test suite: {filename} (Base64: {decode_base64}, Type: {expected_type.__name__})"})
+    if not os.path.exists(filename): # Check if file exists before opening
         raise FileNotFoundError(f"Test suite file not found: {filename}")
     with open(filename, 'r', encoding='utf-8') as f:
         test_suite_raw = json.load(f)
