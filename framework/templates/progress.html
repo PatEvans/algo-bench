@@ -101,7 +101,7 @@
 
         function updateProgress() {
             // Construct URL using blueprint prefix and task ID
-            const statusUrl = `{{ url_for('.' + blueprint_name + '.benchmark_status', task_id='TASK_ID_PLACEHOLDER') }}`.replace('TASK_ID_PLACEHOLDER', taskId);
+            const statusUrl = `{{ url_for('.benchmark_status', task_id='TASK_ID_PLACEHOLDER') }}`.replace('TASK_ID_PLACEHOLDER', taskId); // Corrected url_for
             // console.log("Fetching status from:", statusUrl); // Debugging
 
             fetch(statusUrl)
