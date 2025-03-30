@@ -206,6 +206,50 @@ def get_input_size_c_sort(original_input: list) -> int:
     return len(original_input) if isinstance(original_input, list) else 0
 
 
+# --- C Sort Helpers ---
+
+def prepare_input_c_sort(data_list: list) -> tuple:
+    """Prepare list for C sort function (convert to ctypes array)."""
+    if not data_list:
+        return (None, 0)
+    n = len(data_list)
+    # Create a ctypes array of integers from the Python list
+    c_array = (ctypes.c_int * n)(*data_list)
+    # Return pointer to the array and its size
+    return (ctypes.cast(c_array, ctypes.POINTER(ctypes.c_int)), n)
+
+def prepare_secondary_input_c_sort(primary_output: None) -> tuple:
+    """No secondary input needed for sort."""
+    return () # Empty tuple
+
+def get_output_data_c_sort(primary_output: None, input_args: tuple) -> tuple[list, int]:
+    """Extract list and size from C sort output (which modified the input array)."""
+    # The C function sorts in-place, so the 'output' is the modified input array.
+    # We need the original pointer and size passed in input_args.
+    c_array_ptr, n = input_args
+    if c_array_ptr is None or n == 0:
+        return ([], 0)
+    # Convert the (potentially modified) ctypes array back to a Python list
+    # Dereference the pointer back to the array type to access elements
+    c_array = ctypes.cast(c_array_ptr, ctypes.POINTER(ctypes.c_int * n)).contents
+    output_list = list(c_array)
+    return (output_list, n)
+
+def check_correctness_c_sort(original_input: list, final_output_data: list) -> bool:
+    """Compare output list (from modified C array) with Python's sorted() of original."""
+    if not isinstance(final_output_data, list): # Check if conversion worked
+        return False
+    # Ensure original_input is treated as a list for comparison
+    if not isinstance(original_input, list):
+         return False # Should always be a list from test suite
+    # Compare the list derived from the C array with the sorted version of the *original* list
+    return sorted(original_input) == final_output_data
+
+def get_input_size_c_sort(original_input: list) -> int:
+    """Get size of input list."""
+    return len(original_input) if isinstance(original_input, list) else 0
+
+
 # --- Dispatch Dictionary ---
 # Maps BENCHMARK_TYPE to the relevant helper functions
 BENCHMARK_HELPERS = {
