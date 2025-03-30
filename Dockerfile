@@ -1,5 +1,5 @@
 # Use an official Python runtime that includes build tools, allowing easy installation of GCC
-FROM python:3.10-bullseye # Debian-based, includes common build essentials
+FROM python:3.10-bullseye
 
 # Set the working directory in the container
 WORKDIR /app
