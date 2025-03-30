@@ -258,10 +258,22 @@
             if (entry.error) msg += ` Error: ${entry.error}`;
             // Add more details based on keys present in entry if needed
             // e.g., timing, ratio for specific case updates
-            if (entry.primary_time_ms !== undefined) msg += ` (Time: ${entry.primary_time_ms.toFixed(2)}ms`;
-            if (entry.secondary_time_ms !== undefined) msg += `, Secondary: ${entry.secondary_time_ms.toFixed(2)}ms`;
-            if (entry.ratio !== undefined && entry.ratio !== null) msg += `, Ratio: ${entry.ratio.toFixed(2)}`;
-            if (entry.primary_time_ms !== undefined) msg += `)`; // Closing parenthesis for timing info
+            let timingInfoAdded = false;
+            if (entry.primary_time_ms !== undefined && entry.primary_time_ms !== null) {
+                msg += ` (Time: ${entry.primary_time_ms.toFixed(2)}ms`;
+                timingInfoAdded = true;
+            }
+            if (entry.secondary_time_ms !== undefined && entry.secondary_time_ms !== null) {
+                // Add comma only if primary time was also added
+                msg += `${timingInfoAdded ? ',' : ' ('} Secondary: ${entry.secondary_time_ms.toFixed(2)}ms`;
+                timingInfoAdded = true; // Ensure closing parenthesis is added if only secondary time exists
+            }
+            if (entry.ratio !== undefined && entry.ratio !== null) {
+                // Add comma only if timing info was also added
+                msg += `${timingInfoAdded ? ',' : ' ('} Ratio: ${entry.ratio.toFixed(2)}`;
+                timingInfoAdded = true; // Ensure closing parenthesis is added if only ratio exists
+            }
+            if (timingInfoAdded) msg += `)`; // Add closing parenthesis only if any timing/ratio info was added
 
             return msg;
         }
