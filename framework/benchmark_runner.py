@@ -257,6 +257,8 @@ class BenchmarkRunner:
                     "TIME_SECONDARY_FUNCTION": "1" if getattr(self.config, 'TIME_SECONDARY_FUNCTION', False) else "0",
                     # Add PYTHONUNBUFFERED for immediate output flushing in wrapper script
                     "PYTHONUNBUFFERED": "1",
+                    # Pass the actual LLM code filename from config
+                    "LLM_CODE_FILENAME_ENV": self.config.LLM_CODE_FILENAME,
                 }
                 print(f"Framework Runner: Environment for wrapper: {wrapper_env}")
 

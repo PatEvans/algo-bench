@@ -28,10 +28,15 @@ import importlib.util # For importing Python modules dynamically
 # --- Configuration via Environment Variables ---
 # These MUST be set by the calling process (framework/benchmark_runner.py)
 
-# File paths - Determine source file based on benchmark type later
-LLM_CODE_SOURCE_FILE_C = "/sandbox/llm_code.c"
-LLM_CODE_SOURCE_FILE_PY = "/sandbox/llm_sort.py" # Example for Python sort
+# File paths
 TEST_SUITE_FILE = os.environ.get("TEST_SUITE_FILE", "/sandbox/test_suite.json")
+# Get the LLM code filename from the environment variable set by the runner
+LLM_CODE_FILENAME_ENV = os.environ.get("LLM_CODE_FILENAME_ENV")
+if not LLM_CODE_FILENAME_ENV:
+    raise ValueError("LLM_CODE_FILENAME_ENV environment variable not set.")
+# Construct the full path inside the sandbox
+LLM_CODE_SOURCE_FILE = f"/sandbox/{LLM_CODE_FILENAME_ENV}"
+
 
 # Function Names & Signatures (as JSON string) - Could be C or Python
 # Example C: '{"primary": "compress", "secondary": "decompress", "free": "free_buffer"}'
@@ -209,7 +214,7 @@ def get_input_size_c_sort(original_input: list) -> int:
 BENCHMARK_HELPERS = {
     "c_compression": {
         "is_c_benchmark": True, # Flag for C-specific steps
-        "source_file": LLM_CODE_SOURCE_FILE_C,
+        # "source_file" key removed - filename comes from env var LLM_CODE_FILENAME_ENV
         "load_suite": lambda f: load_test_suite_generic(f, decode_base64=True, expected_type=bytes),
         "prepare_primary_input": prepare_input_compression,
         "prepare_secondary_input": prepare_secondary_input_compression,
@@ -221,7 +226,7 @@ BENCHMARK_HELPERS = {
     },
     "python_sort": {
         "is_c_benchmark": False, # Flag for Python-specific steps
-        "source_file": LLM_CODE_SOURCE_FILE_PY,
+        # "source_file" key removed - filename comes from env var LLM_CODE_FILENAME_ENV
         "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list),
         "prepare_primary_input": prepare_input_python_sort,
         "prepare_secondary_input": prepare_secondary_input_python_sort, # No-op
@@ -233,7 +238,7 @@ BENCHMARK_HELPERS = {
     },
     "c_sort_int_array": {
         "is_c_benchmark": True, # Flag for C-specific steps
-        "source_file": LLM_CODE_SOURCE_FILE_C, # Assumes LLM code is in llm_code.c
+        # "source_file" key removed - filename comes from env var LLM_CODE_FILENAME_ENV
         "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list), # Loads lists of ints
         "prepare_primary_input": prepare_input_c_sort,
         "prepare_secondary_input": prepare_secondary_input_c_sort, # No-op
@@ -360,9 +365,7 @@ def run_all_benchmarks():
 
         # Determine if it's a C benchmark for conditional steps
         is_c_benchmark = helpers.get("is_c_benchmark", False)
-        llm_source_file = helpers.get("source_file")
-        if not llm_source_file:
-             raise ValueError(f"Missing 'source_file' definition for BENCHMARK_TYPE: {BENCHMARK_TYPE}")
+        # llm_source_file is now defined globally from the environment variable
 
         # Validate secondary/free function requirements based on type and flags
         if is_c_benchmark:
@@ -389,13 +392,14 @@ def run_all_benchmarks():
         # --- 3. Compile C Code OR Load Python Module ---
         if is_c_benchmark:
             # --- Compile LLM C Code ---
-            send_progress({'status': 'Setup', 'message': f"Compiling LLM C code: {llm_source_file} -> {LLM_SHARED_LIB_FILE}"})
-            if not os.path.exists(llm_source_file):
-                raise FileNotFoundError(f"LLM C source code file not found: {llm_source_file}")
+            # Use the globally defined LLM_CODE_SOURCE_FILE from env var
+            send_progress({'status': 'Setup', 'message': f"Compiling LLM C code: {LLM_CODE_SOURCE_FILE} -> {LLM_SHARED_LIB_FILE}"})
+            if not os.path.exists(LLM_CODE_SOURCE_FILE):
+                raise FileNotFoundError(f"LLM C source code file not found: {LLM_CODE_SOURCE_FILE}")
 
             compile_command = [
                 "gcc", "-shared", "-fPIC", "-O2", "-std=c11", # Or -std=c99
-                llm_source_file, "-o", LLM_SHARED_LIB_FILE
+                LLM_CODE_SOURCE_FILE, "-o", LLM_SHARED_LIB_FILE # Use correct source file variable
             ]
             try:
                 compile_process = subprocess.run(compile_command, check=True, capture_output=True, text=True, timeout=60)
@@ -481,15 +485,16 @@ def run_all_benchmarks():
             send_progress({'status': 'Setup', 'message': "C functions loaded and signatures defined."})
 
         else: # --- Load Python Module ---
-            send_progress({'status': 'Setup', 'message': f"Loading LLM Python module: {llm_source_file}"})
-            if not os.path.exists(llm_source_file):
-                raise FileNotFoundError(f"LLM Python source code file not found: {llm_source_file}")
+            # Use the globally defined LLM_CODE_SOURCE_FILE from env var
+            send_progress({'status': 'Setup', 'message': f"Loading LLM Python module: {LLM_CODE_SOURCE_FILE}"})
+            if not os.path.exists(LLM_CODE_SOURCE_FILE):
+                raise FileNotFoundError(f"LLM Python source code file not found: {LLM_CODE_SOURCE_FILE}")
 
-            module_name = os.path.splitext(os.path.basename(llm_source_file))[0] # e.g., "llm_sort"
+            module_name = os.path.splitext(os.path.basename(LLM_CODE_SOURCE_FILE))[0] # e.g., "llm_sort"
             try:
-                spec = importlib.util.spec_from_file_location(module_name, llm_source_file)
+                spec = importlib.util.spec_from_file_location(module_name, LLM_CODE_SOURCE_FILE)
                 if spec is None or spec.loader is None:
-                     raise ImportError(f"Could not create module spec for {llm_source_file}")
+                     raise ImportError(f"Could not create module spec for {LLM_CODE_SOURCE_FILE}")
                 llm_module_or_lib = importlib.util.module_from_spec(spec)
                 # Add to sys.modules BEFORE exec_module to handle relative imports within the loaded module
                 sys.modules[module_name] = llm_module_or_lib
@@ -507,12 +512,12 @@ def run_all_benchmarks():
                     except AttributeError:
                          # Only raise error if the function was mandatory (e.g., primary)
                          if func_type == 'primary':
-                              raise NameError(f"Primary function '{func_name}' not found in Python module {llm_source_file}.")
+                              raise NameError(f"Primary function '{func_name}' not found in Python module {LLM_CODE_SOURCE_FILE}.")
                          else:
-                              print(f"Warning: Optional function '{func_name}' not found in Python module {llm_source_file}.", file=sys.stderr)
+                              print(f"Warning: Optional function '{func_name}' not found in Python module {LLM_CODE_SOURCE_FILE}.", file=sys.stderr)
 
             except Exception as import_err:
-                raise ImportError(f"Error importing Python module '{module_name}' from {llm_source_file}: {type(import_err).__name__}: {import_err}\n{traceback.format_exc()}")
+                raise ImportError(f"Error importing Python module '{module_name}' from {LLM_CODE_SOURCE_FILE}: {type(import_err).__name__}: {import_err}\n{traceback.format_exc()}")
 
             send_progress({'status': 'Setup', 'message': "Python functions loaded."})
 
