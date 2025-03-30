@@ -24,11 +24,10 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default-secret-key-change-m
 # --- Blueprint Discovery and Registration ---
 registered_benchmarks = []
 
-# Create an application context to use url_for during setup
-with app.app_context():
-    for bench_dir in BENCHMARK_DIRS:
-        try:
-            module_name = f"{bench_dir}.app"
+# Loop through benchmark directories
+for bench_dir in BENCHMARK_DIRS:
+    try:
+        module_name = f"{bench_dir}.app"
             # Dynamically import the app module from the benchmark directory
             bench_app_module = importlib.import_module(module_name)
 
@@ -41,7 +40,7 @@ with app.app_context():
             print(f"Registered blueprint '{blueprint.name}' from {module_name} at prefix '{blueprint.url_prefix}'")
             registered_benchmarks.append({
                 'name': getattr(bench_config, 'BENCHMARK_NAME', blueprint.name),
-                'url': url_for(f"{blueprint.name}.index") # Generate URL for the blueprint's index
+                'endpoint': f"{blueprint.name}.index" # Store endpoint name instead of URL
             })
         else:
             print(f"Warning: Module {module_name} does not have a callable 'create_blueprint' function. Skipping.")
@@ -61,7 +60,20 @@ with app.app_context():
 @app.route('/')
 def main_index():
     """Displays the main index page linking to benchmarks."""
-    return render_template('main_index.html', benchmarks=registered_benchmarks)
+    # Generate URLs within the request context
+    benchmarks_with_urls = []
+    for benchmark in registered_benchmarks:
+        try:
+            benchmarks_with_urls.append({
+                'name': benchmark['name'],
+                'url': url_for(benchmark['endpoint'])
+            })
+        except Exception as e:
+            print(f"Error generating URL for endpoint {benchmark.get('endpoint', 'N/A')}: {e}")
+            # Optionally skip or add a placeholder if URL generation fails
+            # benchmarks_with_urls.append({'name': benchmark['name'], 'url': '#error'})
+
+    return render_template('main_index.html', benchmarks=benchmarks_with_urls)
 
 # --- Run ---
 if __name__ == '__main__':
