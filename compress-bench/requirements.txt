@@ -1,4 +1,4 @@
-Flask>=2.0
-docker>=6.0 # For running code in isolated containers
-google-generativeai>=0.4 # Or the specific version you need
-# Add other dependencies here later, e.g., openai, anthropic
+# Requirements specific to the compression benchmark (if any)
+# Common requirements (flask, docker, google-generativeai, requests) are in framework/requirements.txt
+# Add any dependencies needed ONLY by compress-bench/test_suite_generator.py or compress-bench/benchmark.py (prompt generation)
+# If none, this file can be empty.
