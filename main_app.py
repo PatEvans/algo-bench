@@ -28,11 +28,11 @@ registered_benchmarks = []
 for bench_dir in BENCHMARK_DIRS:
     try:
         module_name = f"{bench_dir}.app"
-            # Dynamically import the app module from the benchmark directory
-            bench_app_module = importlib.import_module(module_name)
+        # Dynamically import the app module from the benchmark directory
+        bench_app_module = importlib.import_module(module_name)
 
-            # Check if the module has the expected factory function
-            if hasattr(bench_app_module, 'create_blueprint') and callable(bench_app_module.create_blueprint):
+        # Check if the module has the expected factory function
+        if hasattr(bench_app_module, 'create_blueprint') and callable(bench_app_module.create_blueprint):
             # Call the factory function to get the blueprint and its config
             blueprint, bench_config = bench_app_module.create_blueprint()
             # Register the blueprint with the main app
