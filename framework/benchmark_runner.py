@@ -15,13 +15,15 @@ from contextlib import ExitStack
 import tarfile
 import io
 import traceback
-import ctypes # Needed for serialization helper
-from typing import Callable, Optional, Any
+import ctypes # Needed for serialization helper and struct definition
+from typing import Callable, Optional, Any, Dict
 
 # Constants from wrapper script (must match)
 WRAPPER_SCRIPT_FILENAME_CONT = "exec_runner.py" # Name inside container
 WRAPPER_STDOUT_MARKER_BEFORE = "---WRAPPER_STDOUT_MARKER_BEFORE---"
 WRAPPER_STDOUT_MARKER_AFTER = "---WRAPPER_STDOUT_MARKER_AFTER---"
+# Default sandbox directory inside the container
+DEFAULT_SANDBOX_DIR = "/sandbox"
 
 # --- CTypes Definitions & Helpers ---
 # Define Buffer struct commonly used in compression, might be needed by others
@@ -61,20 +63,24 @@ def get_ctype_name(ctype_obj):
 
     # Fallback or raise error
     print(f"Warning: Could not find string name for ctype: {ctype_obj}")
-    return str(ctype_obj) # Or raise error
+    print(f"Warning: Could not find string name for ctype: {ctype_obj}")
+    return str(ctype_obj) # Fallback
 
-def make_signatures_serializable(signatures_dict):
-    """Converts a dictionary of C function signatures with ctypes objects to a JSON-serializable format."""
+def make_signatures_serializable(signatures_dict: Dict[str, Dict]) -> Dict[str, Dict]:
+    """
+    Converts a dictionary of C function/struct signatures containing ctypes objects
+    to a JSON-serializable format using string representations of types.
+    """
     serializable = {}
     for name, sig_info in signatures_dict.items():
-        serializable_info = {}
-        if "argtypes" in sig_info:
+        serializable_info = sig_info.copy() # Start with a copy
+        if "argtypes" in sig_info and sig_info["argtypes"] is not None:
             serializable_info["argtypes"] = [get_ctype_name(t) for t in sig_info["argtypes"]]
         if "restype" in sig_info:
             serializable_info["restype"] = get_ctype_name(sig_info["restype"])
-        # Handle struct definitions
+        # Handle struct definitions specifically
         if sig_info.get("is_struct", False):
-             serializable_info["is_struct"] = True
+             serializable_info["is_struct"] = True # Ensure it's present
              serializable_info["fields"] = [[fname, get_ctype_name(ftype)] for fname, ftype in sig_info.get("fields", [])]
         serializable[name] = serializable_info
     return serializable
@@ -100,11 +106,24 @@ class BenchmarkRunner:
         self.docker_client = None
         self._connect_docker()
 
+        # Validate required config attributes
+        required_attrs = [
+            'BENCHMARK_TYPE', 'DOCKER_IMAGE', 'LLM_CODE_FILENAME', 'TEST_SUITE_FILENAME',
+            'C_FUNCTION_NAMES', 'C_FUNCTION_SIGNATURES', 'WRAPPER_SCRIPT_PATH'
+        ]
+        missing_attrs = [attr for attr in required_attrs if not hasattr(config, attr)]
+        if missing_attrs:
+            raise ValueError(f"Benchmark config is missing required attributes: {', '.join(missing_attrs)}")
+
         # Make signatures serializable for passing via environment variable
-        self.serializable_signatures = make_signatures_serializable(config.C_FUNCTION_SIGNATURES)
+        try:
+            self.serializable_signatures = make_signatures_serializable(config.C_FUNCTION_SIGNATURES)
+        except Exception as e:
+             raise ValueError(f"Failed to serialize C function signatures from config: {e}")
 
         # Read wrapper script content once
         try:
+            # Use WRAPPER_SCRIPT_PATH from config
             wrapper_path = getattr(config, 'WRAPPER_SCRIPT_PATH', None)
             if not wrapper_path or not os.path.exists(wrapper_path):
                  raise FileNotFoundError(f"Wrapper script path not configured or not found: {wrapper_path}")
@@ -112,11 +131,13 @@ class BenchmarkRunner:
                 self.exec_wrapper_code = f.read()
             print(f"Framework Runner: Wrapper script loaded from {wrapper_path}")
         except Exception as e:
-            raise RuntimeError(f"Failed to read Docker wrapper script: {e}")
+            raise RuntimeError(f"Failed to read Docker wrapper script from '{wrapper_path}': {e}")
 
 
     def _connect_docker(self):
         """Initializes Docker client and checks connection."""
+        # Use configured timeout, default to 600s (10 min)
+        api_timeout = getattr(self.config, 'EXEC_TIMEOUT_SECONDS', 600)
         if self.docker_client:
             try:
                 self.docker_client.ping()
@@ -126,16 +147,15 @@ class BenchmarkRunner:
                 self.docker_client = None # Force reconnect
 
         try:
-            print("Framework Runner: Connecting to Docker daemon...")
-            # Increase timeouts
+            print(f"Framework Runner: Connecting to Docker daemon (API Timeout: {api_timeout}s)...")
+            # Use standard timeout for client connection, API timeout for operations
             self.docker_client = docker.from_env(timeout=120)
-            # Set API timeout for long operations like exec
-            self.docker_client.api.timeout = getattr(self.config, 'EXEC_TIMEOUT_SECONDS', 600)
-            self.docker_client.ping()
-            print(f"Framework Runner: Docker client connected. API timeout: {self.docker_client.api.timeout}s")
+            self.docker_client.api.timeout = api_timeout
+            self.docker_client.ping() # Verify connection
+            print(f"Framework Runner: Docker client connected.")
         except (DockerConnectionError, APIError, DockerException, Exception) as e:
             self.docker_client = None # Ensure client is None on failure
-            raise RuntimeError(f"Docker connection failed: {e}. Is Docker running?")
+            raise RuntimeError(f"Docker connection failed: {e}. Is Docker running?") from e
 
     def _ensure_image_exists(self):
         """Pulls the required Docker image if not found locally."""
@@ -149,14 +169,15 @@ class BenchmarkRunner:
                 self.docker_client.images.pull(image_name)
                 print(f"Framework Runner: Docker image '{image_name}' pulled.")
             except APIError as e:
-                raise RuntimeError(f"Failed to pull Docker image '{image_name}': {e}")
+                raise RuntimeError(f"Failed to pull Docker image '{image_name}': {e}") from e
         except (APIError, DockerConnectionError) as e:
-             raise RuntimeError(f"Error checking Docker image '{image_name}': {e}")
+             raise RuntimeError(f"Error checking Docker image '{image_name}': {e}") from e
 
 
     def run_evaluation(self, generated_code: str, test_suite_data: Any, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
         """
-        Runs the full benchmark evaluation in Docker for the given code and test suite.
+        Runs the full benchmark evaluation in Docker for the given code and test suite,
+        using settings from the config object provided during initialization.
 
         Args:
             generated_code: The C code string generated by the LLM or baseline.
@@ -198,17 +219,21 @@ class BenchmarkRunner:
                 # --- 1. Prepare Host Files ---
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Preparing Files', 'message': 'Preparing files on host...'})
                 temp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-                sandbox_dir = "/sandbox" # Standard sandbox dir in container
+                sandbox_dir = getattr(self.config, 'CONTAINER_SANDBOX_DIR', DEFAULT_SANDBOX_DIR)
+
+                # Get filenames from config
+                llm_code_filename = self.config.LLM_CODE_FILENAME
+                test_suite_filename = self.config.TEST_SUITE_FILENAME
 
                 # Paths on host
-                llm_code_path_host = os.path.join(temp_dir, self.config.LLM_CODE_FILENAME)
-                runner_script_path_host = os.path.join(temp_dir, WRAPPER_SCRIPT_FILENAME_CONT) # Use fixed name for runner script
-                test_suite_path_host = os.path.join(temp_dir, self.config.TEST_SUITE_FILENAME) # Use configured test suite name
+                llm_code_path_host = os.path.join(temp_dir, llm_code_filename)
+                runner_script_path_host = os.path.join(temp_dir, WRAPPER_SCRIPT_FILENAME_CONT)
+                test_suite_path_host = os.path.join(temp_dir, test_suite_filename)
 
                 # Paths in container
-                llm_code_path_cont = f"{sandbox_dir}/{self.config.LLM_CODE_FILENAME}"
+                llm_code_path_cont = f"{sandbox_dir}/{llm_code_filename}"
                 runner_script_path_cont = f"{sandbox_dir}/{WRAPPER_SCRIPT_FILENAME_CONT}"
-                test_suite_path_cont = f"{sandbox_dir}/{self.config.TEST_SUITE_FILENAME}"
+                test_suite_path_cont = f"{sandbox_dir}/{test_suite_filename}"
 
                 # Write generated C code
                 with open(llm_code_path_host, 'w', encoding='utf-8') as f:
@@ -219,26 +244,32 @@ class BenchmarkRunner:
                 # Write test suite data (as JSON)
                 try:
                     with open(test_suite_path_host, 'w', encoding='utf-8') as f:
-                        json.dump(test_suite_data, f)
+                        json.dump(test_suite_data, f, indent=2) # Add indent for readability if opened manually
                 except TypeError as e:
-                    raise RuntimeError(f"Failed to serialize test suite data to JSON: {e}")
+                    raise RuntimeError(f"Failed to serialize test suite data to JSON: {e}") from e
 
-                print(f"Framework Runner: Host files prepared in {temp_dir}")
+                print(f"Framework Runner: Host files prepared in {temp_dir}: {llm_code_filename}, {WRAPPER_SCRIPT_FILENAME_CONT}, {test_suite_filename}")
 
                 # --- 2. Start Container ---
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Starting Container', 'message': 'Starting Docker container...'})
                 container = self.docker_client.containers.run(
-                    image=self.config.DOCKER_IMAGE,
-                    command=["sleep", "infinity"],
-                    working_dir=sandbox_dir,
-                    mem_limit=getattr(self.config, 'CONTAINER_MEM_LIMIT', "1g"),
-                    cpu_shares=getattr(self.config, 'CONTAINER_CPU_SHARES', 512),
-                    detach=True,
-                    auto_remove=False, # Manage removal manually
-                    # Consider security options like network_mode='none' if needed
+                    image=self.config.DOCKER_IMAGE, # Use image from config
+                    command=["sleep", "infinity"], # Keep container running
+                    working_dir=sandbox_dir, # Set working dir
+                    mem_limit=getattr(self.config, 'CONTAINER_MEM_LIMIT', "1g"), # Use config value or default
+                    cpu_shares=getattr(self.config, 'CONTAINER_CPU_SHARES', 512), # Use config value or default
+                    detach=True, # Run in background
+                    auto_remove=False, # Manage removal manually via ExitStack
+                    # Security: Consider network_mode='none' if benchmark doesn't need network
+                    # network_mode='none',
+                    # Security: Consider read_only=True for root filesystem if possible
+                    # read_only=True,
+                    # Security: Drop capabilities if not needed
+                    # cap_drop=['ALL'],
                 )
-                stack.callback(lambda c: (c.stop(timeout=10), c.remove(force=True)), container) # Ensure cleanup
-                print(f"Framework Runner: Container {container.short_id} started.")
+                # Ensure container is stopped and removed even if errors occur
+                stack.callback(self._cleanup_container, container)
+                print(f"Framework Runner: Container {container.short_id} started using image '{self.config.DOCKER_IMAGE}'.")
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Container Started', 'message': f'Container ready ({container.short_id}).'})
 
                 # --- 3. Copy Files to Container ---
@@ -248,15 +279,17 @@ class BenchmarkRunner:
                 if exit_code_mkdir != 0:
                      raise RuntimeError(f"Failed to create {sandbox_dir} in container (exit code {exit_code_mkdir}).")
 
-                # Create tar stream and copy
+                # Create tar stream and copy files to sandbox_dir
                 tar_stream = io.BytesIO()
                 with tarfile.open(fileobj=tar_stream, mode='w') as tar:
-                    tar.add(llm_code_path_host, arcname=self.config.LLM_CODE_FILENAME)
+                    # Use the filenames defined earlier for arcname
+                    tar.add(llm_code_path_host, arcname=llm_code_filename)
                     tar.add(runner_script_path_host, arcname=WRAPPER_SCRIPT_FILENAME_CONT)
-                    tar.add(test_suite_path_host, arcname=self.config.TEST_SUITE_FILENAME)
+                    tar.add(test_suite_path_host, arcname=test_suite_filename)
                 tar_stream.seek(0)
-                container.put_archive(path=sandbox_dir, data=tar_stream)
-                print("Framework Runner: Files copied to container.")
+                if not container.put_archive(path=sandbox_dir, data=tar_stream):
+                     raise RuntimeError("Failed to copy files to container via put_archive.")
+                print(f"Framework Runner: Files copied to {sandbox_dir} in container.")
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Files Copied', 'message': 'Benchmark files ready in container.'})
 
                 # --- 4. Execute Wrapper Script ---
@@ -267,14 +300,17 @@ class BenchmarkRunner:
                 wrapper_env = {
                     "LLM_CODE_SOURCE_FILE": llm_code_path_cont,
                     "TEST_SUITE_FILE": test_suite_path_cont,
+                    # Use config values directly
                     "C_FUNCTION_NAMES": json.dumps(self.config.C_FUNCTION_NAMES),
-                    "C_FUNCTION_SIGNATURES": json.dumps(self.serializable_signatures), # Use serializable version
+                    "C_FUNCTION_SIGNATURES": json.dumps(self.serializable_signatures),
                     "BENCHMARK_TYPE": self.config.BENCHMARK_TYPE,
+                    # Use getattr for optional config values, defaulting to False -> "0"
                     "CALCULATE_RATIO": "1" if getattr(self.config, 'CALCULATE_RATIO', False) else "0",
                     "TIME_SECONDARY_FUNCTION": "1" if getattr(self.config, 'TIME_SECONDARY_FUNCTION', False) else "0",
-                    # Add PYTHONUNBUFFERED for immediate output flushing in wrapper
+                    # Add PYTHONUNBUFFERED for immediate output flushing in wrapper script
                     "PYTHONUNBUFFERED": "1",
                 }
+                print(f"Framework Runner: Environment for wrapper: {wrapper_env}")
 
                 exec_instance = self.docker_client.api.exec_create(
                     container=container.id,
@@ -292,29 +328,8 @@ class BenchmarkRunner:
                 exit_code = None
 
                 print(f"Framework Runner: Streaming output from container exec_id: {exec_id}...")
-                for stdout_chunk, stderr_chunk in exec_stream:
-                    if stdout_chunk:
-                        # print(f"DEBUG RUNNER STDOUT: {stdout_chunk!r}") # Verbose
-                        stdout_acc += stdout_chunk
-                    if stderr_chunk:
-                        # print(f"DEBUG RUNNER STDERR: {stderr_chunk!r}") # Verbose
-                        stderr_buffer += stderr_chunk
-                        # Process complete lines from stderr for progress updates
-                        lines = stderr_buffer.split(b'\n')
-                        stderr_buffer = lines[-1] # Keep incomplete line
-                        for line_bytes in lines[:-1]:
-                            line_str = line_bytes.decode('utf-8', errors='replace').strip()
-                            if not line_str: continue
-                            try:
-                                progress_json = json.loads(line_str)
-                                if progress_json.get("type") == "progress" and progress_callback:
-                                    progress_callback(progress_json.get("data", {}))
-                                else:
-                                    print(f"RUNNER (stderr JSON): {line_str}") # Log other JSON
-                            except json.JSONDecodeError:
-                                print(f"RUNNER (stderr raw): {line_str}") # Log raw stderr
-                            except Exception as cb_err:
-                                print(f"ERROR: Progress callback failed: {cb_err}")
+                # Process stream, handling potential decoding errors and calling progress callback
+                self._process_exec_stream(exec_stream, stdout_acc, stderr_buffer, progress_callback)
 
                 # --- 5. Process Results ---
                 print(f"Framework Runner: Stream finished for exec_id: {exec_id}.")
@@ -327,41 +342,8 @@ class BenchmarkRunner:
                     results['error'] = f"Failed to inspect container execution: {inspect_err}"
                     exit_code = -1 # Assume failure
 
-                if exit_code == 0:
-                    output_str_raw = stdout_acc.decode('utf-8', errors='replace')
-                    try:
-                        start_index = output_str_raw.find(WRAPPER_STDOUT_MARKER_BEFORE)
-                        end_index = output_str_raw.find(WRAPPER_STDOUT_MARKER_AFTER)
-
-                        if start_index == -1 or end_index == -1 or end_index <= start_index:
-                            raise ValueError(f"Could not find expected markers in container stdout.")
-
-                        json_content_str = output_str_raw[start_index + len(WRAPPER_STDOUT_MARKER_BEFORE):end_index].strip()
-                        if not json_content_str:
-                             raise ValueError("Container stdout between markers was empty.")
-
-                        final_message = json.loads(json_content_str)
-                        if final_message.get("type") == "result":
-                            container_results = final_message.get("data", {})
-                            print("Framework Runner: Successfully parsed final result from container.")
-                            results.update(container_results) # Update host results dict
-                            if container_results.get('error'):
-                                results['error'] = f"Wrapper script error: {container_results['error']}"
-                        else:
-                            raise ValueError("Unexpected JSON format from wrapper stdout.")
-                    except (json.JSONDecodeError, ValueError) as json_e:
-                        output_snippet = output_str_raw[:1000]
-                        results['error'] = f"Failed to parse final JSON from container (Exit Code 0): {json_e}. Output:\n---\n{output_snippet}\n---"
-                    except Exception as parse_e:
-                         output_snippet = output_str_raw[:1000]
-                         results['error'] = f"Unexpected error parsing container stdout (Exit Code 0): {parse_e}. Output:\n---\n{output_snippet}\n---"
-                elif exit_code is not None:
-                    stderr_final = stderr_buffer.decode('utf-8', errors='replace') # Process remaining buffer
-                    stdout_snippet = stdout_acc.decode('utf-8', errors='replace')[:500]
-                    stderr_snippet = stderr_final[:500]
-                    results['error'] = f"Container wrapper exited with code {exit_code}. Stderr:\n---\n{stderr_snippet}\n---\nStdout:\n---\n{stdout_snippet}\n---"
-                else: # Exit code is None
-                     results['error'] = f"Failed to determine container exec exit code. Inspect result: {exec_inspect}"
+                # Process final output based on exit code
+                self._process_final_output(exit_code, stdout_acc, stderr_buffer, results)
 
 
             # Catch errors during setup/execution within the ExitStack context

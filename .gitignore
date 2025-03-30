@@ -1,2 +1,20 @@
-test_suite.json
+# Test Suites (can be large)
+*.json
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+*.egg-info/
+venv/
+.venv/
+
+# Aider specific
 .aider*
