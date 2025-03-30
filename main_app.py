@@ -6,6 +6,7 @@ Discovers and registers benchmark blueprints.
 import os
 import sys
 import importlib
+import traceback # Import traceback
 from flask import Flask, render_template, url_for
 
 # --- Configuration ---
@@ -44,9 +45,15 @@ for bench_dir in BENCHMARK_DIRS:
             print(f"Warning: Module {module_name} does not have a callable 'create_blueprint' function. Skipping.")
 
     except ImportError as e:
-        print(f"Warning: Could not import module {module_name}: {e}. Skipping.")
+        print(f"ERROR: Could not import module {module_name}: {e}. Check for syntax errors or missing dependencies in the module and its imports.")
+        print(traceback.format_exc()) # Print full traceback for import errors
+    except RuntimeError as e:
+        # Catch RuntimeErrors specifically, often from runner init
+        print(f"ERROR: Runtime error during blueprint creation/registration from {module_name}: {e}. Is Docker running or configured correctly?")
+        print(traceback.format_exc())
     except Exception as e:
-        print(f"Warning: Error registering blueprint from {module_name}: {e}. Skipping.")
+        print(f"ERROR: Unexpected error registering blueprint from {module_name}: {e}.")
+        print(traceback.format_exc()) # Print full traceback for other errors
 
 # --- Main Route ---
 @app.route('/')

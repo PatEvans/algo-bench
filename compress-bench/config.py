@@ -10,8 +10,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import necessary functions/modules from the benchmark and framework
-from compress-bench import benchmark as compression_benchmark # Prompt generation
-from compress-bench import test_suite_generator as compression_test_suite # Test suite loading
+# Use relative imports within the same package
+from . import benchmark as compression_benchmark # Prompt generation
+from . import test_suite_generator as compression_test_suite # Test suite loading
 # Framework components will be used by app.py, not directly imported here usually
 
 # --- Core Benchmark Settings ---
