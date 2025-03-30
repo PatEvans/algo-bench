@@ -1,10 +1,10 @@
 """
-Base Flask application structure for benchmark web UI.
-Handles status tracking, background tasks, and common routes.
-Specific benchmark apps will configure and extend this.
+Base Blueprint structure for benchmark web UI components.
+Handles status tracking, background tasks, and common routes within a Blueprint.
+Specific benchmark apps will configure and instantiate this.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
 import threading
 import uuid
 from collections import deque
@@ -21,97 +21,123 @@ MAX_PROGRESS_UPDATES = 100 # Store more updates
 BENCHMARK_STATUS = {}
 STATUS_LOCK = threading.Lock()
 
-class BenchmarkApp:
-    """Encapsulates the Flask app and benchmark logic."""
+class BenchmarkBlueprint:
+    """
+    Encapsulates the Blueprint, routes, and logic for a specific benchmark.
+    Designed to be created and registered by a main Flask application.
+    """
 
-    def __init__(self, config):
+    def __init__(self, blueprint_name: str, import_name: str, config, url_prefix: str = None):
         """
-        Initializes the BenchmarkApp.
+        Initializes the BenchmarkBlueprint.
 
         Args:
+            blueprint_name: Unique name for the blueprint (e.g., 'compress').
+            import_name: The import name for the Blueprint (usually __name__).
             config: A configuration object/module for the specific benchmark.
                     Expected attributes: BENCHMARK_NAME, AVAILABLE_LLMS,
                                          DATABASE_FILE, TEST_SUITE_FILE,
                                          run_benchmark_func (function to start background task),
                                          benchmark_runner (instance of BenchmarkRunner),
                                          test_suite_loader_func (function to load/check test suite)
+            url_prefix: URL prefix for this benchmark's routes (e.g., '/compress').
         """
-        self.app = Flask(__name__, template_folder='templates') # Use framework templates
-        self.app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default-secret-key-change-me')
-        self.config = config
-        self.db = BenchmarkDB(self.config.DATABASE_FILE)
+        # Use framework templates relative to the framework directory
+        framework_dir = os.path.dirname(os.path.abspath(__file__))
+        template_folder = os.path.join(framework_dir, 'templates')
 
-        # --- Global Test Suite Status ---
+        self.bp = Blueprint(blueprint_name, import_name,
+                            template_folder=template_folder,
+                            url_prefix=url_prefix)
+        self.blueprint_name = blueprint_name
+        self.config = config
+        self.db = BenchmarkDB(self.config.DATABASE_FILE) # DB is specific to this benchmark instance
+
+        # --- Test Suite Status (specific to this benchmark instance) ---
         self.test_suite_data = None
         self.test_suite_load_error = None
-        self._initialize_test_suite() # Load or check test suite on startup
+        self._initialize_test_suite() # Load or check test suite on instantiation
 
-        # --- Register Routes ---
-        self.register_routes()
+        # --- Register Routes on the Blueprint ---
+        self._register_routes()
+
+    def get_blueprint(self):
+        """Returns the configured Flask Blueprint instance."""
+        return self.bp
 
     def _initialize_test_suite(self):
         """Loads the test suite using the configured function."""
-        print(f"Framework: Initializing test suite using function: {getattr(self.config, 'test_suite_loader_func', None)}")
+        print(f"Framework [{self.blueprint_name}]: Initializing test suite using function: {getattr(self.config, 'test_suite_loader_func', None)}")
         loader_func = getattr(self.config, 'test_suite_loader_func', None)
         if loader_func and callable(loader_func):
              try:
                  # The loader function should handle generation if needed and return loaded data or raise error
-                 self.test_suite_data = loader_func()
+                 self.test_suite_data = loader_func() # Store loaded data instance variable
                  self.test_suite_load_error = None
-                 print(f"Framework: Test suite loaded successfully for {self.config.BENCHMARK_NAME}.")
+                 print(f"Framework [{self.blueprint_name}]: Test suite loaded successfully for {self.config.BENCHMARK_NAME}.")
              except Exception as e:
                  self.test_suite_load_error = f"Failed to load/generate test suite '{self.config.TEST_SUITE_FILE}': {e}"
-                 print(f"CRITICAL ERROR: {self.test_suite_load_error}\n{traceback.format_exc()}")
+                 print(f"CRITICAL ERROR [{self.blueprint_name}]: {self.test_suite_load_error}\n{traceback.format_exc()}")
                  self.test_suite_data = None
         else:
              self.test_suite_load_error = "Configuration error: test_suite_loader_func not defined or not callable."
-             print(f"ERROR: {self.test_suite_load_error}")
+             print(f"ERROR [{self.blueprint_name}]: {self.test_suite_load_error}")
              self.test_suite_data = None
 
 
-    def register_routes(self):
-        """Registers Flask routes."""
-        self.app.route('/')(self.index)
-        self.app.route('/admin')(self.admin)
-        self.app.route('/run', methods=['POST'])(self.run_benchmark)
-        self.app.route('/benchmark_progress/<task_id>')(self.benchmark_progress)
-        self.app.route('/benchmark_status/<task_id>')(self.benchmark_status)
+    def _register_routes(self):
+        """Registers routes on the blueprint."""
+        # Use self.bp.route instead of self.app.route
+        self.bp.route('/')(self.index)
+        self.bp.route('/admin')(self.admin)
+        self.bp.route('/run', methods=['POST'])(self.run_benchmark)
+        # Progress/Status routes don't need the benchmark prefix if task_id is globally unique
+        # Let's keep them under the blueprint for now for consistency
+        self.bp.route('/progress/<task_id>')(self.benchmark_progress)
+        self.bp.route('/status/<task_id>')(self.benchmark_status)
+
+    # --- Route Handlers ---
+    # These methods remain largely the same but use the blueprint context
 
     def index(self):
-        """Display the benchmark results page."""
+        """Display the benchmark results page (within the blueprint)."""
         try:
             current_results = self.db.get_all_results()
         except Exception as e:
             flash(f"Error fetching results from database '{self.db.db_file}': {e}", "error")
             current_results = []
+        # Render the template associated with this blueprint
         return render_template('index.html',
                                results=current_results,
                                test_suite_error=self.test_suite_load_error,
-                               benchmark_name=self.config.BENCHMARK_NAME)
+                               benchmark_name=self.config.BENCHMARK_NAME,
+                               blueprint_name=self.blueprint_name) # Pass blueprint name for url_for
 
     def admin(self):
-        """Display the admin page to run benchmarks."""
+        """Display the admin page to run benchmarks (within the blueprint)."""
         return render_template('admin.html',
                                llms=self.config.AVAILABLE_LLMS,
                                test_suite_error=self.test_suite_load_error,
-                               benchmark_name=self.config.BENCHMARK_NAME)
+                               benchmark_name=self.config.BENCHMARK_NAME,
+                               blueprint_name=self.blueprint_name) # Pass blueprint name for url_for
 
     def run_benchmark(self):
-        """Endpoint to trigger a new benchmark run."""
+        """Endpoint to trigger a new benchmark run (within the blueprint)."""
         llm_name = request.form.get('llm')
 
         # Validate parameters
         if not llm_name or llm_name not in self.config.AVAILABLE_LLMS:
             flash(f"Invalid or missing LLM selected: {llm_name}", "error")
-            return redirect(url_for('admin'))
+            # Use relative url_for within blueprint: '.admin'
+            return redirect(url_for(f'.admin'))
 
         # Check if test suite loaded correctly before starting
         if self.test_suite_load_error:
             flash(f"Cannot start benchmark: Test suite failed to load ({self.test_suite_load_error})", "error")
-            return redirect(url_for('admin'))
+            return redirect(url_for('.admin'))
         if self.test_suite_data is None:
              flash(f"Cannot start benchmark: Test suite data is not available.", "error")
-             return redirect(url_for('admin'))
+             return redirect(url_for('.admin'))
 
 
         # Generate a unique ID for this benchmark task
@@ -121,10 +147,13 @@ class BenchmarkApp:
         run_background_func = getattr(self.config, 'run_benchmark_func', None)
         if not run_background_func or not callable(run_background_func):
              flash(f"Configuration error: Background task function not set.", "error")
-             return redirect(url_for('admin'))
+             return redirect(url_for('.admin'))
 
         # Run benchmark in a background thread
         # Pass necessary components: task_id, llm_name, config, db_handler, test_suite_data
+        # The background function needs access to the app context for logging etc.
+        # It's generally better practice to use a task queue (Celery, RQ) for background tasks,
+        # but threading is simpler for this example.
         thread = threading.Thread(target=run_background_func, args=(
             task_id,
             llm_name,
@@ -132,24 +161,26 @@ class BenchmarkApp:
             self.db, # Pass the initialized DB handler
             self.test_suite_data # Pass the loaded test data
         ))
-        thread.daemon = True
+        thread.daemon = True # Allow main thread to exit even if background task is running
         thread.start()
 
         flash(f"{self.config.BENCHMARK_NAME} task {task_id} started for {llm_name}.", "info")
-        return redirect(url_for('benchmark_progress', task_id=task_id))
+        # Redirect to the progress page within this blueprint
+        return redirect(url_for('.benchmark_progress', task_id=task_id))
 
     def benchmark_progress(self, task_id):
-        """Display the progress page for a specific benchmark task."""
+        """Display the progress page for a specific benchmark task (within the blueprint)."""
         # Check if task exists to provide better initial info?
         with STATUS_LOCK:
             status = BENCHMARK_STATUS.get(task_id)
-        if not status:
-             # Optionally flash a message or handle differently
-             pass
-        return render_template('progress.html', task_id=task_id, benchmark_name=self.config.BENCHMARK_NAME)
+        # Render the template associated with this blueprint
+        return render_template('progress.html',
+                               task_id=task_id,
+                               benchmark_name=self.config.BENCHMARK_NAME,
+                               blueprint_name=self.blueprint_name) # Pass blueprint name for url_for
 
     def benchmark_status(self, task_id):
-        """API endpoint to get the current status of a benchmark task."""
+        """API endpoint to get the current status of a benchmark task (within the blueprint)."""
         with STATUS_LOCK:
             status = BENCHMARK_STATUS.get(task_id)
 
@@ -163,11 +194,8 @@ class BenchmarkApp:
 
         return jsonify(status_copy)
 
-    def run(self, **kwargs):
-        """Runs the Flask development server."""
-        self.app.run(**kwargs)
-
-# --- Background Task Management (Common Logic) ---
+# --- Background Task Management (Remains mostly the same, but uses config passed in) ---
+# This function is called by the specific benchmark's app.py wrapper function
 
 def run_benchmark_background_base(task_id, llm_name, config, db: BenchmarkDB, test_suite_data, benchmark_runner):
     """

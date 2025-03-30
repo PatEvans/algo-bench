@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Algorithm Benchmark Hub</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Algorithm Benchmark Hub</h1>
+        <p>Select a benchmark to view results or run new tests:</p>
+
+        {% if benchmarks %}
+            <ul class="list-group">
+                {% for benchmark in benchmarks %}
+                    <li class="list-group-item">
+                        <a href="{{ benchmark.url }}">{{ benchmark.name }}</a>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <div class="alert alert-warning" role="alert">
+                No benchmark applications were successfully registered. Check server logs.
+            </div>
+        {% endif %}
+
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

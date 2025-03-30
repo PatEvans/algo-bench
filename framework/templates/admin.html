@@ -8,8 +8,10 @@
 </head>
 <body>
     <div class="container mt-4">
-        <h1>Run New Benchmark</h1>
-        <p><a href="{{ url_for('index') }}" class="btn btn-secondary">View Results</a></p>
+        <!-- Use blueprint name passed from view function -->
+        <h1>Run New {{ benchmark_name }} Benchmark</h1>
+        <p><a href="{{ url_for('.' + blueprint_name + '.index') }}" class="btn btn-secondary">View Results</a></p>
+        <p><a href="{{ url_for('main_index') }}" class="btn btn-secondary btn-sm">Back to Hub</a></p>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -27,9 +29,10 @@
                 <strong>Test Suite Error:</strong> {{ test_suite_error }} - Benchmarks may fail. Cannot start new runs.
             </div>
         {% else %}
-            <form action="{{ url_for('run_benchmark') }}" method="post">
+            <!-- Use relative url_for within blueprint -->
+            <form action="{{ url_for('.' + blueprint_name + '.run_benchmark') }}" method="post">
                 <div class="mb-3">
-                    <label for="llm" class="form-label">Select LLM / Baseline:</label>
+                    <label for="llm" class="form-label">Select LLM / Baseline for {{ benchmark_name }}:</label>
                     <select class="form-select" id="llm" name="llm" required>
                         {% for llm in llms %}
                             <option value="{{ llm }}">{{ llm }}</option>

@@ -48,8 +48,10 @@
 </head>
 <body>
     <div class="container mt-4">
-        <h1>Benchmark Progress</h1>
-        <p><a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Results</a></p>
+        <!-- Use blueprint name passed from view function -->
+        <h1>{{ benchmark_name }} Progress</h1>
+        <p><a href="{{ url_for('.' + blueprint_name + '.index') }}" class="btn btn-secondary">Back to Results</a></p>
+        <p><a href="{{ url_for('main_index') }}" class="btn btn-secondary btn-sm">Back to Hub</a></p>
 
         <div id="status-area">
             <p><strong>Task ID:</strong> <span id="task-id">{{ task_id }}</span></p>
@@ -94,12 +96,29 @@
 
         let intervalId = null;
         let initialLoad = true; // Flag for first load
+        // Get blueprint name for API endpoint URL
+        const blueprintName = "{{ blueprint_name }}";
 
         function updateProgress() {
-            fetch(`/benchmark_status/${taskId}`)
+            // Construct URL using blueprint prefix and task ID
+            const statusUrl = `{{ url_for('.' + blueprint_name + '.benchmark_status', task_id='TASK_ID_PLACEHOLDER') }}`.replace('TASK_ID_PLACEHOLDER', taskId);
+            // console.log("Fetching status from:", statusUrl); // Debugging
+
+            fetch(statusUrl)
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                        // Try fetching from root if blueprint fails (fallback, might indicate issue)
+                        console.warn(`Failed to fetch from ${statusUrl} (${response.status}), trying root...`);
+                        return fetch(`/benchmark_status/${taskId}`); // Assumes root endpoint exists - maybe remove this fallback
+                    }
+                    return response;
+                })
+                .then(response => {
+                     if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status} from ${response.url}`);
+                     }
+                     return response.json();
+                })
                     }
                     return response.json();
                 })
