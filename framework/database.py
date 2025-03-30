@@ -96,16 +96,16 @@ class BenchmarkDB:
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    result_data.get('benchmark_name'), # Use the generic name
+                    result_data.get('benchmark_name'),
                     result_data.get('llm'),
-                    result_data.get('correctness'), # Should be 0 or 1
-                    # Map specific metrics to generic columns
-                    result_data.get('avg_compression_time_ms') or result_data.get('avg_sort_time_ms') or result_data.get('avg_time_ms'), # Primary time
-                    result_data.get('avg_decompression_time_ms') or result_data.get('avg_secondary_time_ms'), # Secondary time
-                    result_data.get('avg_compression_ratio') or result_data.get('avg_ratio'), # Ratio
+                    result_data.get('correctness'), # Should be 0 or 1 from runner
+                    # Use the generic keys directly from the runner's result
+                    result_data.get('avg_time_ms'),
+                    result_data.get('avg_secondary_time_ms'),
+                    result_data.get('avg_ratio'),
                     result_data.get('error'),
                     result_data.get('generated_code'),
-                    details_json # Store the JSON blob
+                    details_json
                 ))
                 conn.commit()
             print(f"Result saved to {self.db_file} for {result_data.get('benchmark_name')} - {result_data.get('llm')}")
