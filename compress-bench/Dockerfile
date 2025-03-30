@@ -6,55 +6,51 @@ FROM --platform=linux/amd64 python:3.10-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
-COPY requirements.txt .
+# --- Install Dependencies ---
+# Install OS-level dependencies first (gcc for C compilation)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    file \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install any needed packages specified in requirements.txt
+# Verify gcc installation
+RUN gcc --version
+
+# Copy only the requirements files first to leverage Docker cache
+COPY framework/requirements.txt /app/framework/requirements.txt
+COPY compress-bench/requirements.txt /app/compress-bench/requirements.txt
+
+# Install Python dependencies for both framework and benchmark
 # Using --no-cache-dir reduces image size slightly
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r /app/framework/requirements.txt
+RUN pip install --no-cache-dir -r /app/compress-bench/requirements.txt
 
-# Install build tools including gcc and C standard library headers
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential file && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# --- Copy Application Code ---
+# Copy framework code (needed for imports)
+COPY framework/ /app/framework/
+# Copy benchmark-specific code
+COPY compress-bench/ /app/compress-bench/
 
-# Verify gcc installation and architecture
-RUN gcc --version && \
-    file $(which gcc) && \
-    # Check if stdlib.h can be found by the preprocessor (optional but good check)
-    echo '#include <stdlib.h>' | gcc -E - > /dev/null
-
-# Copy the rest of the application code into the container at /app
-# Ensure all necessary Python files and the templates directory are copied
-COPY app.py .
-COPY benchmark.py .
-COPY database.py .
-COPY llm_interface.py .
-COPY test_suite_generator.py .
-COPY docker_exec_wrapper.py .
-COPY baseline_c_compress.c .
-COPY templates/ ./templates/
-# If you have other .py files or data files needed by the app, add COPY lines for them here
-
-# Generate the test suite during the image build process
-# This runs the __main__ block in benchmark.py with the --generate-suite flag
-# It will use the default parameters defined in test_suite_generator.py unless overridden here
-# The output file 'test_suite.json' will be created inside the /app directory in the image
-RUN python test_suite_generator.py --generate-suite --suite-file test_suite.json
+# --- Generate Test Suite ---
+# Generate the test suite during the image build process using the benchmark-specific generator
+# The output file (e.g., 'compression_test_suite.json') will be created inside /app/compress-bench/
+RUN python /app/compress-bench/test_suite_generator.py --generate-suite --suite-file /app/compress-bench/compression_test_suite.json
 
 # Verify the test suite file was created (optional, useful for debugging build issues)
-RUN ls -lh test_suite.json
+RUN ls -lh /app/compress-bench/compression_test_suite.json
 
-# Make port 5000 available to the world outside this container (Flask's default port)
-EXPOSE 5000
+# --- Runtime Configuration ---
+# Make port 5001 available (adjust if needed)
+EXPOSE 5001
 
 # Define environment variable for Flask to run on 0.0.0.0 to be accessible externally
 ENV FLASK_RUN_HOST=0.0.0.0
-# Optional: Set FLASK_APP if needed, though Flask usually detects app.py
-# ENV FLASK_APP=app.py
+# Set the port for this specific benchmark app
+ENV COMPRESS_BENCH_PORT=5001
+
+# Set the working directory for running the app
+WORKDIR /app/compress-bench
 
 # Run app.py using Flask's built-in server when the container launches
 # Note: For production, consider using a more robust WSGI server like Gunicorn
 CMD ["flask", "run"]
-# Alternative using python directly (less common for Flask now):
-# CMD ["python", "app.py"]
