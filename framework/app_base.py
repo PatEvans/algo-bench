@@ -192,7 +192,42 @@ class BenchmarkBlueprint:
         if 'progress' in status_copy and isinstance(status_copy['progress'], deque):
             status_copy['progress'] = list(status_copy['progress'])
 
-        return jsonify(status_copy)
+        try:
+            # Attempt to jsonify the potentially complex status dictionary
+            return jsonify(status_copy)
+        except TypeError as e:
+            # Log the error and return a simplified status indicating the serialization issue
+            print(f"ERROR: Failed to jsonify status for task {task_id}: {e}\n{traceback.format_exc()}")
+            # Try to salvage some info, converting problematic parts to strings
+            if 'final_result' in status_copy:
+                 # Convert the whole final_result dict to its string representation
+                 # This avoids deep inspection for non-serializable types within it
+                 status_copy['final_result'] = f"Error serializing result: {e}. Raw: {repr(status_copy['final_result'])}"
+            if 'progress' in status_copy:
+                 # Progress deque was already converted to list, but items might be bad
+                 try:
+                     json.dumps(status_copy['progress']) # Test if progress list is serializable
+                 except TypeError:
+                     status_copy['progress'] = ["Error serializing one or more progress updates."]
+
+            # Remove potentially problematic generated_code if it exists and is large/complex
+            # Convert to string representation just in case it's not a string
+            if 'generated_code' in status_copy:
+                 code_repr = repr(status_copy['generated_code'])
+                 status_copy['generated_code'] = code_repr[:200] + "... (truncated due to serialization error)"
+
+            # Return the modified, hopefully serializable, status
+            try:
+                 return jsonify(status_copy)
+            except Exception as final_json_err:
+                 # If it STILL fails, return a very basic error
+                 print(f"ERROR: STILL Failed to jsonify status for task {task_id} after cleanup: {final_json_err}")
+                 return jsonify({
+                     'task_id': task_id,
+                     'status': 'Error',
+                     'error': f'Failed to serialize status details: {e}',
+                     'last_update': status.get('last_update')
+                 }), 500
 
 # --- Background Task Management (Remains mostly the same, but uses config passed in) ---
 # This function is called by the specific benchmark's app.py wrapper function
