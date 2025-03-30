@@ -9,27 +9,37 @@ Handles:
 
 import json
 import os # For file path operations
+import re # Needed for cleaning C code output
 import random
 from typing import Optional, List, Tuple # Adjusted imports
 
-# Import functions from the new test suite generator module
+# Import functions from the test suite generator module
 from . import test_suite_generator
 
 # Constants related to Docker execution are removed as it's handled by the framework.
 # BENCHMARKED_ALGORITHM_LABEL might still be useful if referenced elsewhere, keep for now.
-BENCHMARKED_ALGORITHM_LABEL = "LLM/Baseline Sort [Framework]" # Updated label slightly
+BENCHMARKED_ALGORITHM_LABEL = "LLM/Baseline C Sort [Framework]" # Updated label
 
 
-def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[list[int], list[int]]]:
-    """Generates small input/output examples for the LLM prompt."""
+def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: int = -10, max_val: int = 10) -> list[tuple[str, str]]:
+    """Generates small input/output examples in C array format for the LLM prompt."""
     examples = []
+
+    def format_c_array(data: list[int]) -> str:
+        if not data:
+            return "{}"
+        return "{" + ", ".join(map(str, data)) + "}"
+
     # Ensure basic cases are covered
     if num_examples >= 1:
-        examples.append(([], [])) # Empty list
+        examples.append(("// Input: size=0, arr={}", "// Output: arr={} (no change)")) # Empty array
     if num_examples >= 2:
-        examples.append(([5], [5])) # Single element
+        examples.append(("// Input: size=1, arr={5}", "// Output: arr={5} (no change)")) # Single element
     if num_examples >= 3:
-        examples.append(([3, 1, 4, 1, 5, 9], [1, 1, 3, 4, 5, 9])) # Basic unsorted with duplicate
+        input_list = [3, 1, 4, 1, 5, 9]
+        output_list = sorted(input_list)
+        examples.append((f"// Input: size={len(input_list)}, arr={format_c_array(input_list)}",
+                         f"// Output: arr={format_c_array(output_list)}")) # Basic unsorted with duplicate
 
     # Add more random examples if needed
     current_examples = len(examples)
@@ -37,30 +47,52 @@ def generate_prompt_examples(num_examples: int = 3, max_size: int = 8, min_val: 
         size = random.randint(2, max_size)
         input_list = [random.randint(min_val, max_val) for _ in range(size)]
         output_list = sorted(input_list)
-        examples.append((input_list, output_list))
+        examples.append((f"// Input: size={size}, arr={format_c_array(input_list)}",
+                         f"// Output: arr={format_c_array(output_list)}"))
 
     return examples[:num_examples] # Return exactly num_examples
 
-def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = None) -> str:
+
+def create_sort_prompt(examples: Optional[list[tuple[str, str]]] = None) -> str:
     """
-    Creates a prompt to ask an LLM for an efficient general-purpose sorting algorithm,
+    Creates a prompt to ask an LLM for an efficient C sorting function,
     optionally including examples.
     """
     base_prompt = (
-        "Generate a Python function named `sort_algorithm` that implements an efficient sorting algorithm "
-        "suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.).\n"
-        "The function MUST take a list of numbers as input and return a new sorted list.\n"
-        "IMPORTANT: The function MUST NOT use the built-in sorted() function or the .sort() method.\n"
-        "IMPORTANT: The function MUST NOT print anything to standard output. It should ONLY return the sorted list."
+        "Generate a complete C function named `sort_array` that implements an efficient sorting algorithm "
+        "for an array of integers. The function should be suitable for general use cases (handling various data distributions like random, sorted, reversed, duplicates, etc.).\n\n"
+        "Function Signature:\n"
+        "```c\n"
+        "void sort_array(int* arr, size_t n);\n"
+        "```\n\n"
+        "Requirements:\n"
+        "- The function MUST take a pointer to an integer array (`int* arr`) and the number of elements (`size_t n`) as input.\n"
+        "- The function MUST sort the array **in-place**.\n"
+        "- The function MUST be self-contained or include necessary helper functions within the generated code block.\n"
+        "- Include necessary standard library headers (like `<stdlib.h>` for `size_t` or memory allocation if needed, `<stdio.h>` only for debugging if essential but remove before final output).\n"
+        "- IMPORTANT: The function MUST NOT use the standard library `qsort` function.\n"
+        "- IMPORTANT: The function MUST NOT print anything to standard output (stdout or stderr).\n"
+        "- Focus on correctness and reasonable efficiency (e.g., O(n log n) average time complexity is preferred)."
     )
 
     if examples:
-        example_str = "\n\nHere are some examples of how the function should behave:\n"
-        for input_list, output_list in examples:
-            example_str += f"Input: {input_list}\nOutput: {output_list}\n\n"
-        return base_prompt + example_str.strip() # Add examples and remove trailing newline
+        example_str = "\n\nHere are some examples of how the function should modify the input array:\n"
+        for input_comment, output_comment in examples:
+            example_str += f"{input_comment}\n{output_comment}\n\n"
+        # Add a final code block structure hint
+        example_str += (
+            "Please provide the complete C code for the `sort_array` function, including any necessary headers and helper functions, within a single C code block.\n"
+            "```c\n"
+            "// Include headers here\n\n"
+            "// Helper functions (if any) here\n\n"
+            "void sort_array(int* arr, size_t n) {\n"
+            "    // Your implementation here\n"
+            "}\n"
+            "```"
+        )
+        return base_prompt + example_str.strip()
     else:
-        return base_prompt
+        return base_prompt + "\n\nPlease provide the complete C code for the `sort_array` function within a single C code block."
 
 # Test suite generation/loading functions are now in test_suite_generator.py
 
@@ -79,89 +111,21 @@ def create_sort_prompt(examples: Optional[list[tuple[list[int], list[int]]]] = N
 #    ... (Removed) ...
 
 
-# Note: The __main__ block below is for standalone testing/example usage of benchmark.py.
-# Test suite generation is now handled by test_suite_generator.py.
+# --- Evaluation Logic & run_single_benchmark (REMOVED) ---
+# These are handled by the framework runner and wrapper script.
+
+
+# Note: The __main__ block below is for standalone testing/example usage of this module.
 if __name__ == '__main__':
-    # Import argparse here as it's only needed for CLI execution
-    import argparse
+    print("Generating example C sort prompt:")
+    # Generate examples using the updated function
+    c_examples = generate_prompt_examples(num_examples=5)
+    # Create the prompt using the updated function
+    c_prompt = create_sort_prompt(examples=c_examples)
+    print(c_prompt)
 
-    parser = argparse.ArgumentParser(description="Benchmark Execution Examples")
-    # Use the default from the generator module
-    parser.add_argument('--suite-file', default=test_suite_generator.DEFAULT_TEST_SUITE_FILE, help="Specify the test suite JSON file path")
-
-    args = parser.parse_args()
-
-    # Example of running benchmarks using a loaded suite
-    print("Running example benchmarks with loaded suite...")
-    try:
-        # Load the test suite using the function from the generator module
-        test_suite = test_suite_generator.load_test_suite(args.suite_file)
-
-        # Example usage - Load suite first, then run benchmarks
-        print("\nRunning example benchmarks with loaded suite...")
-
-        # --- Run example with fixed Merge Sort code ---
-        # Note: Baseline run is removed from standalone example. Run it via the web UI.
-        print("\nRunning example benchmark with fixed Merge Sort code...")
-
-        EXAMPLE_MERGE_SORT_CODE = """
-import sys
-from typing import List, TypeVar
-
-# Increase recursion depth limit for potentially deep recursion with large lists
-try:
-    sys.setrecursionlimit(2000)
-except Exception:
-    pass
-
-T = TypeVar('T')
-
-def sort_algorithm(arr: List[T]) -> List[T]:
-    # Base Case
-    if len(arr) <= 1:
-        return arr[:]
-
-    # Divide
-    mid = len(arr) // 2
-    left_half = arr[:mid]
-    right_half = arr[mid:]
-
-    # Conquer
-    sorted_left = sort_algorithm(left_half)
-    sorted_right = sort_algorithm(right_half)
-
-    # Combine (Merge)
-    merged = []
-    left_idx, right_idx = 0, 0
-    while left_idx < len(sorted_left) and right_idx < len(sorted_right):
-        if sorted_left[left_idx] <= sorted_right[right_idx]:
-            merged.append(sorted_left[left_idx])
-            left_idx += 1
-        else:
-            merged.append(sorted_right[right_idx])
-            right_idx += 1
-
-    # Append Remaining
-    while left_idx < len(sorted_left):
-        merged.append(sorted_left[left_idx])
-        left_idx += 1
-    while right_idx < len(sorted_right):
-        merged.append(sorted_right[right_idx])
-        right_idx += 1
-
-    return merged
-"""
-            # Run the benchmark using the fixed code
-        result_example = run_single_benchmark(
-                llm_name="Example Merge Sort", # Use a descriptive name
-                generated_code=EXAMPLE_MERGE_SORT_CODE,
-                categorized_test_cases=test_suite
-                # Add progress_callback=print if you want to see progress updates
-            )
-        print("\nExample Merge Sort Benchmark Result:\n", json.dumps(result_example, indent=2))
-
-
-    except FileNotFoundError:
-            print(f"Test suite file '{args.suite_file}' not found. Generate it first using: python test_suite_generator.py --generate-suite")
-    except Exception as e:
-            print(f"An error occurred during example benchmark run: {e}")
+    print("\n---")
+    print("To generate the test suite, run:")
+    # Use the updated default filename from the generator module
+    print(f"python sort-bench/test_suite_generator.py --generate-suite --suite-file sort-bench/{test_suite_generator.DEFAULT_TEST_SUITE_FILE}")
+    print("\nTo run the full benchmark, use the web interface via main_app.py")

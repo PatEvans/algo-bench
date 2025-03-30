@@ -7,7 +7,7 @@ import random
 from collections import defaultdict
 
 # Default filename, can be overridden
-DEFAULT_TEST_SUITE_FILE = "test_suite.json"
+DEFAULT_TEST_SUITE_FILE = "c_sort_test_suite.json" # Updated default filename
 
 # Increased default sizes for more meaningful timing
 def generate_test_cases(size_small=10, size_medium=10000, size_large=1000000, num_cases_per_type=2) -> dict[str, list[list[int]]]: # Corrected return type hint
@@ -153,4 +153,5 @@ if __name__ == '__main__':
         generate_and_save_test_suite(args.suite_file, **gen_params)
     else:
         print("Use --generate-suite to create a new test suite file.")
-        print(f"Example: python test_suite_generator.py --generate-suite --suite-file {args.suite_file}")
+        # Update example command to use the new default filename
+        print(f"Example: python sort-bench/test_suite_generator.py --generate-suite --suite-file sort-bench/{DEFAULT_TEST_SUITE_FILE}")

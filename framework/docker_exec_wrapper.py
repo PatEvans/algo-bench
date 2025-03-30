@@ -159,7 +159,51 @@ def check_correctness_python_sort(original_input: list, final_output_data: list)
 
 def get_input_size_python_sort(original_input: list) -> int:
     """Get size of input list."""
-    return len(original_input)
+    return len(original_input) if isinstance(original_input, list) else 0
+
+
+# --- C Sort Helpers ---
+
+def prepare_input_c_sort(data_list: list) -> tuple:
+    """Prepare list for C sort function (convert to ctypes array)."""
+    if not data_list:
+        return (None, 0)
+    n = len(data_list)
+    # Create a ctypes array of integers from the Python list
+    c_array = (ctypes.c_int * n)(*data_list)
+    # Return pointer to the array and its size
+    return (ctypes.cast(c_array, ctypes.POINTER(ctypes.c_int)), n)
+
+def prepare_secondary_input_c_sort(primary_output: None) -> tuple:
+    """No secondary input needed for sort."""
+    return () # Empty tuple
+
+def get_output_data_c_sort(primary_output: None, input_args: tuple) -> tuple[list, int]:
+    """Extract list and size from C sort output (which modified the input array)."""
+    # The C function sorts in-place, so the 'output' is the modified input array.
+    # We need the original pointer and size passed in input_args.
+    c_array_ptr, n = input_args
+    if c_array_ptr is None or n == 0:
+        return ([], 0)
+    # Convert the (potentially modified) ctypes array back to a Python list
+    # Dereference the pointer back to the array type to access elements
+    c_array = ctypes.cast(c_array_ptr, ctypes.POINTER(ctypes.c_int * n)).contents
+    output_list = list(c_array)
+    return (output_list, n)
+
+def check_correctness_c_sort(original_input: list, final_output_data: list) -> bool:
+    """Compare output list (from modified C array) with Python's sorted() of original."""
+    if not isinstance(final_output_data, list): # Check if conversion worked
+        return False
+    # Ensure original_input is treated as a list for comparison
+    if not isinstance(original_input, list):
+         return False # Should always be a list from test suite
+    # Compare the list derived from the C array with the sorted version of the *original* list
+    return sorted(original_input) == final_output_data
+
+def get_input_size_c_sort(original_input: list) -> int:
+    """Get size of input list."""
+    return len(original_input) if isinstance(original_input, list) else 0
 
 
 # --- Dispatch Dictionary ---
@@ -174,6 +218,8 @@ BENCHMARK_HELPERS = {
         "get_output_data": get_output_data_compression,
         "check_correctness": check_correctness_compression,
         "get_input_size": get_input_size_compression,
+        "free_func_name_config": "free", # Name from FUNCTION_NAMES config
+        "free_arg_type": "Buffer",       # Type expected by the free function
     },
     "python_sort": {
         "is_c_benchmark": False, # Flag for Python-specific steps
@@ -184,8 +230,22 @@ BENCHMARK_HELPERS = {
         "get_output_data": get_output_data_python_sort,
         "check_correctness": check_correctness_python_sort,
         "get_input_size": get_input_size_python_sort,
+        "free_func_name_config": None, # No free function for Python sort
+        "free_arg_type": None,
     },
-    # Add entries for other benchmark types here (e.g., c_sort_int_array)
+    "c_sort_int_array": {
+        "is_c_benchmark": True, # Flag for C-specific steps
+        "source_file": LLM_CODE_SOURCE_FILE_C, # Assumes LLM code is in llm_code.c
+        "load_suite": lambda f: load_test_suite_generic(f, decode_base64=False, expected_type=list), # Loads lists of ints
+        "prepare_primary_input": prepare_input_c_sort,
+        "prepare_secondary_input": prepare_secondary_input_c_sort, # No-op
+        "get_output_data": get_output_data_c_sort, # Gets data from modified input array
+        "check_correctness": check_correctness_c_sort,
+        "get_input_size": get_input_size_c_sort,
+        "free_func_name_config": None, # No specific free function needed if sort is in-place
+        "free_arg_type": None,
+    },
+    # Add entries for other benchmark types here
 }
 
 
@@ -552,13 +612,16 @@ def run_all_benchmarks():
 
 
                     # --- Correctness Check (using helper) ---
-                    # The helper compares the original input data with the final processed data
+                    # For in-place sorts (like c_sort_int_array), the 'final_output_for_check'
+                    # is derived from the modified input array. The helper needs the *original*
+                    # input data for comparison.
                     is_correct = helpers['check_correctness'](original_input_data, final_output_for_check)
 
                     if is_correct:
                         total_cases_correct += 1
                         # Aggregate metrics only for fully successful cases (correctness check passed)
                         total_primary_time_sec += primary_time_sec
+                        # Note: TIME_SECONDARY_FUNCTION is likely False for sort, but check anyway
                         if TIME_SECONDARY_FUNCTION and secondary_time_sec is not None:
                             total_secondary_time_sec += secondary_time_sec
                         if CALCULATE_RATIO and ratio is not None and ratio != float('inf'):
@@ -588,8 +651,11 @@ def run_all_benchmarks():
                              # Generate expected output using the same helper logic as the check
                              # Note: This assumes check_correctness helper doesn't modify input/output
                              expected_output_for_log = "N/A"
-                             if BENCHMARK_TYPE == "c_compression": expected_output_for_log = original_input_data
-                             # elif BENCHMARK_TYPE == "c_sort_int_array": expected_output_for_log = sorted(original_input_data)
+                             if BENCHMARK_TYPE == "c_compression":
+                                 expected_output_for_log = original_input_data
+                             elif BENCHMARK_TYPE == "c_sort_int_array":
+                                 # Ensure original_input is a list before sorting for logging
+                                 expected_output_for_log = sorted(original_input_data) if isinstance(original_input_data, list) else "N/A (Input not list)"
                              # Add other types as needed
 
                              mismatch_details = f"Output (type {type(final_output_for_check).__name__}, first 100): {repr(final_output_for_check[:100])}. Expected (type {type(expected_output_for_log).__name__}, first 100): {repr(expected_output_for_log[:100])}"
@@ -624,45 +690,66 @@ def run_all_benchmarks():
                     })
 
                 finally:
-                    # --- IMPORTANT: Free C memory ONLY for C benchmarks ---
-                    if is_c_benchmark and free_func_name and 'free' in func_pointers and func_pointers['free']:
+                    # --- IMPORTANT: Free C memory ONLY for C benchmarks that require it ---
+                    # Get the configured free function name and expected type from helpers
+                    free_func_name_config = helpers.get("free_func_name_config") # e.g., "free"
+                    free_arg_type_name = helpers.get("free_arg_type") # e.g., "Buffer"
+
+                    if is_c_benchmark and free_func_name_config and free_arg_type_name and 'free' in func_pointers and func_pointers['free']:
                         free_func = func_pointers['free']
+                        free_arg_ctype = CTYPES_MAP.get(free_arg_type_name) # Get the actual ctype (e.g., CBuffer)
+
+                        if not free_arg_ctype:
+                             print(f"Warning: Could not find ctype for configured free argument type '{free_arg_type_name}'. Skipping free.", file=sys.stderr)
+                             continue # Skip freeing for this case
+
                         # Determine what needs freeing based on function signatures
                         primary_sig = function_signatures.get(primary_func_name, {})
                         secondary_sig = function_signatures.get(secondary_func_name, {}) if secondary_func_name else {}
                         primary_restype_name = primary_sig.get('restype')
                         secondary_restype_name = secondary_sig.get('restype')
 
-                        # Free primary output if it's a type that needs freeing (e.g., Buffer)
-                        # Check if primary_output exists and is of the expected freeable type
-                        if primary_output is not None and primary_restype_name == "Buffer":
-                            # Ensure primary_output is actually a CBuffer instance before freeing
-                            if isinstance(primary_output, CBuffer):
+                        # Free primary output if its return type matches the configured free_arg_type
+                        if primary_output is not None and primary_restype_name == free_arg_type_name:
+                            if isinstance(primary_output, free_arg_ctype):
                                 try:
-                                    if primary_output.data: # Check if data pointer is valid
-                                        free_func(primary_output)
-                                        # Optional: Nullify fields after free to prevent dangling pointers if struct is reused
-                                        # primary_output.data = None
-                                        # primary_output.size = 0
+                                    # Special check for Buffer type to see if data is valid
+                                    should_free = True
+                                    if free_arg_type_name == "Buffer" and not getattr(primary_output, 'data', True):
+                                         should_free = False
+
+                                    if should_free:
+                                         free_func(primary_output)
+                                         # Optional: Nullify fields after free
+                                         # if free_arg_type_name == "Buffer":
+                                         #     primary_output.data = None
+                                         #     primary_output.size = 0
                                 except Exception as free_err:
                                     print(f"Warning: Error calling free function for primary output ({primary_restype_name}): {free_err}", file=sys.stderr)
                             else:
-                                 print(f"Warning: Expected CBuffer for primary output but got {type(primary_output)}. Cannot free.", file=sys.stderr)
-                        # Add elif for other freeable C primary return types here
+                                 print(f"Warning: Expected {free_arg_type_name} for primary output but got {type(primary_output)}. Cannot free.", file=sys.stderr)
+                        # Add elif for other freeable C primary return types here (if needed)
 
-                        # Free secondary output if it's a type that needs freeing
-                        if secondary_output is not None and secondary_restype_name == "Buffer":
-                             if isinstance(secondary_output, CBuffer):
+                        # Free secondary output if its return type matches the configured free_arg_type
+                        if secondary_output is not None and secondary_restype_name == free_arg_type_name:
+                             if isinstance(secondary_output, free_arg_ctype):
                                  try:
-                                     if secondary_output.data:
-                                         free_func(secondary_output)
-                                         # secondary_output.data = None
-                                         # secondary_output.size = 0
+                                     should_free = True
+                                     if free_arg_type_name == "Buffer" and not getattr(secondary_output, 'data', True):
+                                          should_free = False
+
+                                     if should_free:
+                                          free_func(secondary_output)
+                                          # Optional: Nullify fields after free
+                                          # if free_arg_type_name == "Buffer":
+                                          #     secondary_output.data = None
+                                          #     secondary_output.size = 0
                                  except Exception as free_err:
                                      print(f"Warning: Error calling free function for secondary output ({secondary_restype_name}): {free_err}", file=sys.stderr)
                              else:
-                                 print(f"Warning: Expected CBuffer for secondary output but got {type(secondary_output)}. Cannot free.", file=sys.stderr)
-                        # Add elif for other freeable C secondary return types here
+                                 print(f"Warning: Expected {free_arg_type_name} for secondary output but got {type(secondary_output)}. Cannot free.", file=sys.stderr)
+                        # Add elif for other freeable C secondary return types here (if needed)
+                    # --- End of Freeing Logic ---
 
 
         # --- 6. Calculate Final Aggregated Results ---
