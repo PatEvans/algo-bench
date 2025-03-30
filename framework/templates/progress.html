@@ -50,7 +50,7 @@
     <div class="container mt-4">
         <!-- Use blueprint name passed from view function -->
         <h1>{{ benchmark_name }} Progress</h1>
-        <p><a href="{{ url_for('.' + blueprint_name + '.index') }}" class="btn btn-secondary">Back to Results</a></p>
+        <p><a href="{{ url_for('.index') }}" class="btn btn-secondary">Back to Results</a></p> <!-- Corrected url_for -->
         <p><a href="{{ url_for('main_index') }}" class="btn btn-secondary btn-sm">Back to Hub</a></p>
 
         <div id="status-area">
