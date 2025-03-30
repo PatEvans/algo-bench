@@ -57,8 +57,8 @@ def get_ctype_name(ctype_obj):
                        return name
              elif ctype == ctype_obj: # Direct comparison for simple types
                   return name
-        # Check if the passed type object is the same as the CBuffer type in our map
-        elif name == "Buffer" and ctype_obj == ctype:
+        # Check if the passed type object is a class named CBuffer
+        elif name == "Buffer" and isinstance(ctype_obj, type) and ctype_obj.__name__ == 'CBuffer':
              return name
 
     # Fallback or raise error
