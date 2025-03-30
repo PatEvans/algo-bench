@@ -24,7 +24,7 @@ import io # To handle in-memory tar archive
 # import socket
 
 # Import functions from the new test suite generator module
-import test_suite_generator
+from . import test_suite_generator
 
 # Using Docker containers provides better isolation than subprocess.
 # Moved import random to top level
