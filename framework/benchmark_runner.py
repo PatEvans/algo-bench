@@ -96,18 +96,20 @@ class BenchmarkRunner:
 
         try:
             # Send progress update *before* attempting connection
-            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Connecting to Docker daemon...'})
+            # Note: progress_callback is not passed to this method, so this check will be false.
+            # If progress updates are needed here, the method signature must change.
+            # if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Connecting to Docker daemon...'})
             print(f"Framework Runner: Connecting to Docker daemon (API Timeout: {api_timeout}s)...")
             # Use standard timeout for client connection, API timeout for operations
             self.docker_client = docker.from_env(timeout=120)
             self.docker_client.api.timeout = api_timeout
             self.docker_client.ping() # Verify connection
             print(f"Framework Runner: Docker client connected.")
-            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Docker connection successful.'})
+            # if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Docker connection successful.'}) # Callback not available here
         except (DockerConnectionError, APIError, DockerException, Exception) as e:
             self.docker_client = None # Ensure client is None on failure
             err_msg = f"Docker connection failed: {e}. Is Docker running?"
-            if progress_callback: progress_callback({'status': 'Error', 'category': 'Setup: Docker', 'error': err_msg})
+            # if progress_callback: progress_callback({'status': 'Error', 'category': 'Setup: Docker', 'error': err_msg}) # Callback not available here
             raise RuntimeError(err_msg) from e
 
     def _ensure_image_exists(self, progress_callback: Optional[Callable[[dict], None]] = None):
@@ -163,8 +165,8 @@ class BenchmarkRunner:
 
         # Ensure Docker connection is active and image exists
         try:
-            self._connect_docker(progress_callback) # Pass callback
-            self._ensure_image_exists(progress_callback) # Pass callback
+            self._connect_docker() # Don't pass callback here
+            self._ensure_image_exists(progress_callback) # Pass callback here
         except RuntimeError as e:
             results['error'] = str(e)
             # Progress callback already called by helper functions on error
