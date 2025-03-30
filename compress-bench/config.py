@@ -25,7 +25,9 @@ TEST_SUITE_FILENAME = compression_test_suite.DEFAULT_TEST_SUITE_FILE # e.g., "co
 LLM_CODE_FILENAME = "llm_compress.c"
 
 # --- Docker Settings ---
-DOCKER_IMAGE = "compression-benchmark" # Image built by compress-bench/Dockerfile
+# DOCKER_IMAGE setting is removed/commented out.
+# The BenchmarkRunner uses the unified image built by the root Dockerfile.
+# DOCKER_IMAGE = "compression-benchmark"
 CONTAINER_MEM_LIMIT = "1g"
 CONTAINER_CPU_SHARES = 512 # Relative CPU weight (default 1024)
 EXEC_TIMEOUT_SECONDS = 600 # Timeout for the entire docker exec run

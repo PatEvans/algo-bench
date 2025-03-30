@@ -1,0 +1,16 @@
+# Combined requirements for the LLM Benchmark Framework and all benchmarks
+
+# Framework requirements
+flask
+docker
+google-generativeai
+requests
+
+# Compression benchmark requirements (if any were added)
+# (Currently empty)
+
+# Sort benchmark requirements (if any were added beyond framework)
+# (Currently empty)
+
+# Add other common dependencies here if needed
+# Example: numpy, pandas, etc.

@@ -24,6 +24,8 @@ WRAPPER_STDOUT_MARKER_BEFORE = "---WRAPPER_STDOUT_MARKER_BEFORE---"
 WRAPPER_STDOUT_MARKER_AFTER = "---WRAPPER_STDOUT_MARKER_AFTER---"
 # Default sandbox directory inside the container
 DEFAULT_SANDBOX_DIR = "/sandbox"
+# Define the standard Docker image name built by the root Dockerfile
+UNIFIED_DOCKER_IMAGE = "llm-benchmark-env:latest" # Or your preferred image name/tag
 
 # --- CTypes Definitions & Helpers (REMOVED) ---
 # Serialization logic is no longer needed here.
@@ -39,21 +41,22 @@ class BenchmarkRunner:
 
         Args:
             config: Configuration object/module for the specific benchmark.
-                    Expected attributes: BENCHMARK_TYPE, DOCKER_IMAGE,
-                                         LLM_CODE_FILENAME, TEST_SUITE_FILENAME,
-                                         FUNCTION_NAMES (dict), FUNCTION_SIGNATURES (dict with string types),
+                    Expected attributes: BENCHMARK_TYPE, LLM_CODE_FILENAME,
+                                         TEST_SUITE_FILENAME, FUNCTION_NAMES (dict),
+                                         FUNCTION_SIGNATURES (dict with string types),
                                          CALCULATE_RATIO (bool), TIME_SECONDARY_FUNCTION (bool),
                                          WRAPPER_SCRIPT_PATH (path to framework/docker_exec_wrapper.py)
                                          Optional: CONTAINER_MEM_LIMIT, CONTAINER_CPU_SHARES, EXEC_TIMEOUT_SECONDS
+                    NOTE: DOCKER_IMAGE is no longer read from config.
         """
         self.config = config
         self.docker_client = None
         self._connect_docker()
 
-        # Validate required config attributes
+        # Validate required config attributes (DOCKER_IMAGE removed)
         required_attrs = [
-            'BENCHMARK_TYPE', 'DOCKER_IMAGE', 'LLM_CODE_FILENAME', 'TEST_SUITE_FILENAME',
-            'FUNCTION_NAMES', 'FUNCTION_SIGNATURES', 'WRAPPER_SCRIPT_PATH' # Use standardized names
+            'BENCHMARK_TYPE', 'LLM_CODE_FILENAME', 'TEST_SUITE_FILENAME',
+            'FUNCTION_NAMES', 'FUNCTION_SIGNATURES', 'WRAPPER_SCRIPT_PATH'
         ]
         missing_attrs = [attr for attr in required_attrs if not hasattr(config, attr)]
         if missing_attrs:
@@ -103,18 +106,18 @@ class BenchmarkRunner:
             raise RuntimeError(f"Docker connection failed: {e}. Is Docker running?") from e
 
     def _ensure_image_exists(self):
-        """Pulls the required Docker image if not found locally."""
-        image_name = self.config.DOCKER_IMAGE
+        """Checks if the unified Docker image exists locally."""
+        image_name = UNIFIED_DOCKER_IMAGE # Use the hardcoded image name
         try:
             self.docker_client.images.get(image_name)
-            print(f"Framework Runner: Docker image '{image_name}' found locally.")
+            print(f"Framework Runner: Unified Docker image '{image_name}' found locally.")
         except ImageNotFound:
-            print(f"Framework Runner: Pulling Docker image: {image_name}...")
-            try:
-                self.docker_client.images.pull(image_name)
-                print(f"Framework Runner: Docker image '{image_name}' pulled.")
-            except APIError as e:
-                raise RuntimeError(f"Failed to pull Docker image '{image_name}': {e}") from e
+            # Don't pull automatically, user should build it from the Dockerfile
+            error_msg = (f"Unified Docker image '{image_name}' not found locally. "
+                         f"Please build it using the Dockerfile in the project root:\n"
+                         f"docker build -t {image_name} .")
+            print(f"ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
         except (APIError, DockerConnectionError) as e:
              raise RuntimeError(f"Error checking Docker image '{image_name}': {e}") from e
 
@@ -198,7 +201,7 @@ class BenchmarkRunner:
                 # --- 2. Start Container ---
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Starting Container', 'message': 'Starting Docker container...'})
                 container = self.docker_client.containers.run(
-                    image=self.config.DOCKER_IMAGE, # Use image from config
+                    image=UNIFIED_DOCKER_IMAGE, # Use the unified image name
                     command=["sleep", "infinity"], # Keep container running
                     working_dir=sandbox_dir, # Set working dir
                     mem_limit=getattr(self.config, 'CONTAINER_MEM_LIMIT', "1g"), # Use config value or default
@@ -214,7 +217,7 @@ class BenchmarkRunner:
                 )
                 # Ensure container is stopped and removed even if errors occur
                 stack.callback(self._cleanup_container, container)
-                print(f"Framework Runner: Container {container.short_id} started using image '{self.config.DOCKER_IMAGE}'.")
+                print(f"Framework Runner: Container {container.short_id} started using image '{UNIFIED_DOCKER_IMAGE}'.")
                 if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Container Started', 'message': f'Container ready ({container.short_id}).'})
 
                 # --- 3. Copy Files to Container ---
