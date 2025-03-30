@@ -167,9 +167,11 @@
                             timestampSpan.textContent = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleTimeString() : '';
 
                             const statusSpan = document.createElement('span');
-                            const statusClass = `log-status-${entry.status || 'Unknown'}`;
-                            statusSpan.classList.add(statusClass);
-                            statusSpan.textContent = `[${entry.status || 'Info'}] `;
+                            // Sanitize the status string for use as a CSS class name (replace spaces with hyphens)
+                            const sanitizedStatus = (entry.status || 'Unknown').replace(/\s+/g, '-');
+                            const statusClass = `log-status-${sanitizedStatus}`;
+                            statusSpan.classList.add(statusClass); // Use the sanitized class name
+                            statusSpan.textContent = `[${entry.status || 'Info'}] `; // Display original status text
 
                             const messageSpan = document.createElement('span');
                             messageSpan.textContent = formatProgressMessage(entry);
