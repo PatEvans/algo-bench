@@ -61,7 +61,7 @@ class BenchmarkDB:
                 ''')
                 # Consider adding indexes
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON results (timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_benchmark_llm ON results (benchmark_name, llm)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_benchmark_llm ON results (benchmark_name, llm)') # This index should now work
                 conn.commit()
             print(f"Database initialized/checked: {self.db_file}")
         except sqlite3.Error as e:
