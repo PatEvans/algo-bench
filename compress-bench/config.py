@@ -101,7 +101,7 @@ C_FUNCTION_SIGNATURES = {
 
 # --- Benchmark Execution Parameters ---
 # These are passed to the docker_exec_wrapper via environment variables
-BENCHMARK_TYPE = "compression" # Identifier for the wrapper script logic
+BENCHMARK_TYPE = "c_compression" # Identifier for the wrapper script logic (must match BENCHMARK_HELPERS key)
 CALCULATE_RATIO = True
 TIME_SECONDARY_FUNCTION = True
 
