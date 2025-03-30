@@ -306,13 +306,13 @@ def run_all_benchmarks():
 
         # Validate secondary/free function requirements based on type and flags
         if is_c_benchmark:
-             if TIME_SECONDARY_FUNCTION and not secondary_func_name:
-                  raise ValueError("Missing 'secondary' function name in FUNCTION_NAMES when TIME_SECONDARY_FUNCTION is true for C benchmark")
+             if should_time_secondary and not secondary_func_name:
+                  raise ValueError("Missing 'secondary' function name in FUNCTION_NAMES when secondary timing is enabled for a C benchmark")
              # Free function is optional for C, handled later
         else: # Python benchmark
-             if TIME_SECONDARY_FUNCTION:
-                  print("Warning: TIME_SECONDARY_FUNCTION is true, but benchmark type is Python. Ignoring secondary timing.", file=sys.stderr)
-                  TIME_SECONDARY_FUNCTION = False # Override for Python
+             if should_time_secondary:
+                  print("Warning: Secondary timing was enabled, but benchmark type is Python. Ignoring secondary timing.", file=sys.stderr)
+                  should_time_secondary = False # Override local flag for Python
              if free_func_name:
                   print("Warning: 'free' function specified in FUNCTION_NAMES, but benchmark type is Python. Ignoring.", file=sys.stderr)
                   free_func_name = None # Override for Python
@@ -536,8 +536,8 @@ def run_all_benchmarks():
 
 
                     # --- Secondary Function Timing & Execution (if applicable) ---
-                    # TIME_SECONDARY_FUNCTION flag is already adjusted for Python above
-                    if TIME_SECONDARY_FUNCTION and 'secondary' in func_pointers:
+                    # Use the locally adjusted should_time_secondary flag
+                    if should_time_secondary and 'secondary' in func_pointers:
                         # Prepare secondary input using helper (takes primary output)
                         secondary_args = helpers['prepare_secondary_input'](primary_output)
                         start_secondary = time.perf_counter()
@@ -563,10 +563,9 @@ def run_all_benchmarks():
                             total_secondary_time_sec += secondary_time_sec
                         if CALCULATE_RATIO and ratio is not None and ratio != float('inf'):
                              total_ratio += ratio
-                        total_primary_time_sec += primary_time_sec
-                        if TIME_SECONDARY_FUNCTION and secondary_time_sec is not None:
-                            total_secondary_time_sec += secondary_time_sec
-                        # Only add finite ratios to the total
+                       # The following duplicate aggregation lines seem redundant and were removed in a previous step.
+                       # Keeping the SEARCH block structure correct, but the REPLACE block reflects the intended state
+                       # after removing the duplicate lines and applying the variable name change.
                         if CALCULATE_RATIO and ratio is not None and ratio != float('inf') and ratio != float('-inf') and ratio == ratio: # Check for inf/nan
                              total_ratio += ratio
                         total_cases_processed += 1 # Increment only if correct
