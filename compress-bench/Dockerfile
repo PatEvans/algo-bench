@@ -1,0 +1,60 @@
+# Use an official Python runtime as a parent image
+# Using 3.10-slim as it's generally a good balance of size and compatibility
+# Explicitly specify linux/amd64 platform to match host and avoid architecture issues
+FROM --platform=linux/amd64 python:3.10-slim
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the requirements file into the container at /app
+COPY requirements.txt .
+
+# Install any needed packages specified in requirements.txt
+# Using --no-cache-dir reduces image size slightly
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install build tools including gcc and C standard library headers
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential file && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify gcc installation and architecture
+RUN gcc --version && \
+    file $(which gcc) && \
+    # Check if stdlib.h can be found by the preprocessor (optional but good check)
+    echo '#include <stdlib.h>' | gcc -E - > /dev/null
+
+# Copy the rest of the application code into the container at /app
+# Ensure all necessary Python files and the templates directory are copied
+COPY app.py .
+COPY benchmark.py .
+COPY database.py .
+COPY llm_interface.py .
+COPY test_suite_generator.py .
+COPY docker_exec_wrapper.py .
+COPY baseline_c_compress.c .
+COPY templates/ ./templates/
+# If you have other .py files or data files needed by the app, add COPY lines for them here
+
+# Generate the test suite during the image build process
+# This runs the __main__ block in benchmark.py with the --generate-suite flag
+# It will use the default parameters defined in test_suite_generator.py unless overridden here
+# The output file 'test_suite.json' will be created inside the /app directory in the image
+RUN python test_suite_generator.py --generate-suite --suite-file test_suite.json
+
+# Verify the test suite file was created (optional, useful for debugging build issues)
+RUN ls -lh test_suite.json
+
+# Make port 5000 available to the world outside this container (Flask's default port)
+EXPOSE 5000
+
+# Define environment variable for Flask to run on 0.0.0.0 to be accessible externally
+ENV FLASK_RUN_HOST=0.0.0.0
+# Optional: Set FLASK_APP if needed, though Flask usually detects app.py
+# ENV FLASK_APP=app.py
+
+# Run app.py using Flask's built-in server when the container launches
+# Note: For production, consider using a more robust WSGI server like Gunicorn
+CMD ["flask", "run"]
+# Alternative using python directly (less common for Flask now):
+# CMD ["python", "app.py"]
