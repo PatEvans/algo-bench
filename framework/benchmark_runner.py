@@ -95,6 +95,8 @@ class BenchmarkRunner:
                 self.docker_client = None # Force reconnect
 
         try:
+            # Send progress update *before* attempting connection
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Connecting to Docker daemon...'})
             print(f"Framework Runner: Connecting to Docker daemon (API Timeout: {api_timeout}s)...")
             # Use standard timeout for client connection, API timeout for operations
             self.docker_client = docker.from_env(timeout=120)
