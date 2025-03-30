@@ -107,20 +107,15 @@
 
             fetch(statusUrl)
                 .then(response => {
-                    if (!response.ok) {
-                        // Try fetching from root if blueprint fails (fallback, might indicate issue)
-                        console.warn(`Failed to fetch from ${statusUrl} (${response.status}), trying root...`);
-                        return fetch(`/benchmark_status/${taskId}`); // Assumes root endpoint exists - maybe remove this fallback
-                    }
-                    return response;
-                })
-                .then(response => {
                      if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status} from ${response.url}`);
+                        // Throw an error immediately if the response is not OK, include status text
+                        return response.text().then(text => { // Get response body for context
+                           throw new Error(`HTTP error! Status: ${response.status} ${response.statusText} from ${statusUrl}. Response: ${text.substring(0, 200)}...`);
+                        });
                      }
-                     return response.json(); // Parse JSON from the successful response
+                     return response.json(); // Parse JSON only if response is OK
                 })
-                // Removed extra closing brace and duplicate return
+                // Removed the fallback fetch and adjusted error handling
                 .then(data => { // This .then processes the parsed JSON data
                     // Update header info only on first load or if changed
                     if (initialLoad) {
@@ -212,10 +207,18 @@
                     }
                 })
                 .catch(error => {
-                    console.error('Error fetching benchmark status:', error);
-                    statusElement.textContent = 'Error fetching status';
+                    // Log the detailed error from the fetch promise chain
+                    console.error('Error fetching or processing benchmark status:', error);
+                    statusElement.textContent = 'Error fetching status'; // Keep simple message for user
                     statusElement.className = 'badge status-badge bg-danger';
-                    // Optionally stop polling on fetch error
+                    // Optionally add the error message to the log area for more visibility
+                    const logEntryDiv = document.createElement('div');
+                    logEntryDiv.classList.add('log-entry', 'log-status-Error'); // Style as error
+                    logEntryDiv.textContent = `[${new Date().toLocaleTimeString()}] Frontend Error: ${error.message}`;
+                    progressLog.appendChild(logEntryDiv);
+                    progressLog.scrollTop = progressLog.scrollHeight; // Scroll to show error
+
+                    // Consider stopping polling if errors persist, but leave it running for now
                     // clearInterval(intervalId);
                     // intervalId = null;
                 });
