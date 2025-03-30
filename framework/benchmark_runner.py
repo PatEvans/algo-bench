@@ -51,7 +51,7 @@ class BenchmarkRunner:
         """
         self.config = config
         self.docker_client = None
-        self._connect_docker()
+        # Note: _connect_docker is now called lazily before first use
 
         # Validate required config attributes (DOCKER_IMAGE removed)
         required_attrs = [
@@ -101,25 +101,33 @@ class BenchmarkRunner:
             self.docker_client.api.timeout = api_timeout
             self.docker_client.ping() # Verify connection
             print(f"Framework Runner: Docker client connected.")
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker', 'message': 'Docker connection successful.'})
         except (DockerConnectionError, APIError, DockerException, Exception) as e:
             self.docker_client = None # Ensure client is None on failure
-            raise RuntimeError(f"Docker connection failed: {e}. Is Docker running?") from e
+            err_msg = f"Docker connection failed: {e}. Is Docker running?"
+            if progress_callback: progress_callback({'status': 'Error', 'category': 'Setup: Docker', 'error': err_msg})
+            raise RuntimeError(err_msg) from e
 
-    def _ensure_image_exists(self):
+    def _ensure_image_exists(self, progress_callback: Optional[Callable[[dict], None]] = None):
         """Checks if the unified Docker image exists locally."""
         image_name = UNIFIED_DOCKER_IMAGE # Use the hardcoded image name
+        if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker Image', 'message': f"Checking for image '{image_name}'..."})
         try:
             self.docker_client.images.get(image_name)
             print(f"Framework Runner: Unified Docker image '{image_name}' found locally.")
+            if progress_callback: progress_callback({'status': 'Setup', 'category': 'Setup: Docker Image', 'message': f"Image '{image_name}' found."})
         except ImageNotFound:
             # Don't pull automatically, user should build it from the Dockerfile
             error_msg = (f"Unified Docker image '{image_name}' not found locally. "
                          f"Please build it using the Dockerfile in the project root:\n"
                          f"docker build -t {image_name} .")
             print(f"ERROR: {error_msg}")
+            if progress_callback: progress_callback({'status': 'Error', 'category': 'Setup: Docker Image', 'error': error_msg})
             raise RuntimeError(error_msg)
         except (APIError, DockerConnectionError) as e:
-             raise RuntimeError(f"Error checking Docker image '{image_name}': {e}") from e
+             err_msg = f"Error checking Docker image '{image_name}': {e}"
+             if progress_callback: progress_callback({'status': 'Error', 'category': 'Setup: Docker Image', 'error': err_msg})
+             raise RuntimeError(err_msg) from e
 
 
     def run_evaluation(self, generated_code: str, test_suite_data: Any, progress_callback: Optional[Callable[[dict], None]] = None) -> dict:
@@ -151,13 +159,13 @@ class BenchmarkRunner:
             results['error'] = "No test suite data provided."
             return results
 
-        # Ensure Docker connection is active
+        # Ensure Docker connection is active and image exists
         try:
-            self._connect_docker()
-            self._ensure_image_exists()
+            self._connect_docker(progress_callback) # Pass callback
+            self._ensure_image_exists(progress_callback) # Pass callback
         except RuntimeError as e:
             results['error'] = str(e)
-            if progress_callback: progress_callback({'status': 'Error', 'error': results['error']})
+            # Progress callback already called by helper functions on error
             return results
 
         container = None

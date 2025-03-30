@@ -377,20 +377,64 @@ def run_benchmark_background_base(task_id, llm_name, config, db: BenchmarkDB, te
              # Ensure result is a dict for final status update consistency
              result = {'error': 'Runner failed to produce result.', 'correctness': 0}
 
+        # --- Clean the result dictionary before storing ---
+        cleaned_result = {}
+        if result:
+            try:
+                # Attempt to serialize/deserialize to clean non-standard types
+                # Use a helper similar to the wrapper's final print logic
+                def clean_value(v):
+                    if isinstance(v, float):
+                        if math.isinf(v): return "Infinity" if v > 0 else "-Infinity"
+                        if math.isnan(v): return "NaN"
+                    elif isinstance(v, bytes):
+                        # Try decoding, fallback to repr for non-utf8 bytes
+                        try:
+                            return v.decode('utf-8')
+                        except UnicodeDecodeError:
+                            return repr(v)
+                    # Add other type conversions if needed (e.g., numpy types)
+                    return v
+
+                # Recursively clean the dictionary
+                def clean_dict_recursive(d):
+                    if isinstance(d, dict):
+                        return {k: clean_dict_recursive(v) for k, v in d.items()}
+                    elif isinstance(d, list):
+                        return [clean_dict_recursive(i) for i in d]
+                    else:
+                        return clean_value(d)
+
+                cleaned_result = clean_dict_recursive(result)
+                # Verify it's serializable now
+                json.dumps(cleaned_result)
+            except Exception as clean_err:
+                 print(f"ERROR Task {task_id}: Failed to clean/serialize final result dict: {clean_err}")
+                 cleaned_result = {'error': f"Failed to serialize result: {clean_err}. Original: {repr(result)}", 'correctness': 0}
+                 # Ensure essential keys are present if possible
+                 cleaned_result['benchmark_name'] = result.get('benchmark_name', benchmark_name)
+                 cleaned_result['llm'] = result.get('llm', llm_name)
+                 cleaned_result['generated_code'] = result.get('generated_code') # Keep original code if possible
+        else:
+             cleaned_result = {'error': 'Runner failed to produce result.', 'correctness': 0}
+
 
         # --- Update final status ---
-        # Determine final status based on the potentially updated result dict
-        final_status_str = 'Completed' if result.get('correctness') == 1 and not result.get('error') else 'Error'
+        # Determine final status based on the *cleaned* result dict
+        final_status_str = 'Completed' if cleaned_result.get('correctness') == 1 and not cleaned_result.get('error') else 'Error'
         with STATUS_LOCK:
             if task_id in BENCHMARK_STATUS:
                 BENCHMARK_STATUS[task_id]['status'] = final_status_str
                 BENCHMARK_STATUS[task_id]['end_time'] = time.time()
-                BENCHMARK_STATUS[task_id]['final_result'] = result
-                BENCHMARK_STATUS[task_id]['error'] = result.get('error') if result else "Runner failed to produce result."
+                BENCHMARK_STATUS[task_id]['final_result'] = cleaned_result # Store the cleaned result
+                BENCHMARK_STATUS[task_id]['error'] = cleaned_result.get('error') # Use error from cleaned result
                 BENCHMARK_STATUS[task_id]['last_update'] = time.time()
-                # Ensure generated code is stored
-                if generated_code_for_llm:
+                # Ensure generated code is stored (use original if cleaning failed)
+                if 'generated_code' not in cleaned_result and generated_code_for_llm:
                      BENCHMARK_STATUS[task_id]['generated_code'] = generated_code_for_llm
+                elif 'generated_code' in cleaned_result:
+                     BENCHMARK_STATUS[task_id]['generated_code'] = cleaned_result['generated_code']
+
 
         print(f"Framework: Finished background task {task_id}: {benchmark_name} - {llm_name} ({final_status_str})")
 
