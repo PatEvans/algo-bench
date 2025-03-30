@@ -11,7 +11,7 @@ from flask import Flask, render_template, url_for
 
 # --- Configuration ---
 # Define benchmark directories relative to the project root
-BENCHMARK_DIRS = ['compress-bench'] # Add other benchmark directories here
+BENCHMARK_DIRS = ['compress-bench', 'sort-bench'] # Add other benchmark directories here
 # Ensure project root is in path for imports
 project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
