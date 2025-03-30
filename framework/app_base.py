@@ -70,7 +70,7 @@ class BenchmarkBlueprint:
 
     def _initialize_test_suite(self):
         """Loads the test suite using the configured function."""
-        print(f"Framework [{self.blueprint_name}]: Initializing test suite using function: {getattr(self.config, 'test_suite_loader_func', None)}")
+        # print(f"Framework [{self.blueprint_name}]: Initializing test suite using function: {getattr(self.config, 'test_suite_loader_func', None)}") # DEBUG
         loader_func = getattr(self.config, 'test_suite_loader_func', None)
         if loader_func and callable(loader_func):
              try:
@@ -196,10 +196,10 @@ class BenchmarkBlueprint:
             # Convert deque to list *before* logging/serializing
             status_copy['progress'] = list(status_copy['progress'])
 
-        # --- Enhanced Logging ---
-        print(f"DEBUG: Preparing to jsonify status for task {task_id}. Content:")
+        # --- Enhanced Logging --- # DEBUG - Removed
+        # print(f"DEBUG: Preparing to jsonify status for task {task_id}. Content:")
         # Use pprint for potentially large/nested dicts
-        pprint.pprint(status_copy, stream=sys.stderr)
+        # pprint.pprint(status_copy, stream=sys.stderr)
         # --- End Enhanced Logging ---
 
         try:
@@ -235,22 +235,22 @@ class BenchmarkBlueprint:
 
             # 3. Check generated_code (less likely, but possible if not string)
             if 'generated_code' in cleaned_status and not isinstance(cleaned_status['generated_code'], str):
-                 print(f"DEBUG: generated_code is not a string for task {task_id} (type: {type(cleaned_status['generated_code'])}). Converting.")
+                 # print(f"DEBUG: generated_code is not a string for task {task_id} (type: {type(cleaned_status['generated_code'])}). Converting.") # DEBUG
                  cleaned_status['generated_code'] = repr(cleaned_status['generated_code'])
 
             # --- End Granular Cleanup Attempt ---
 
             # Return the modified, hopefully serializable, status
             try:
-                 print(f"DEBUG: Attempting jsonify again for task {task_id} after cleanup.")
+                 # print(f"DEBUG: Attempting jsonify again for task {task_id} after cleanup.") # DEBUG
                  return jsonify(cleaned_status)
             except Exception as final_json_err:
                  # If it STILL fails, return a very basic error
                  print(f"ERROR: STILL Failed to jsonify status for task {task_id} after cleanup: {final_json_err}")
-                 # Log the cleaned status that still failed
-                 print("--- Cleaned Status that Failed ---")
-                 pprint.pprint(cleaned_status, stream=sys.stderr)
-                 print("---------------------------------")
+                 # Log the cleaned status that still failed - Removed for less noise
+                 # print("--- Cleaned Status that Failed ---")
+                 # pprint.pprint(cleaned_status, stream=sys.stderr)
+                 # print("---------------------------------")
                  return jsonify({
                      'task_id': task_id,
                      'status': 'Error',
